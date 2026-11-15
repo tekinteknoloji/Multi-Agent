@@ -143,5 +143,7 @@ dialog pre { max-height: min(45vh, 430px); }
 .team-branch h3 { margin: 0; font-size: .95rem; }
 .team-branch .result-head button { padding: 4px 8px; font-size: .78rem; }
 .team-branch .extra-agent-row { border-top: 1px solid var(--line); padding-top: 7px; }
+.project-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; border-top: 1px solid var(--line); padding-block: 15px 24px; color: var(--muted); font-size: .85rem; }
+.project-footer a { color: var(--accent); font-weight: 650; margin-inline-start: .3em; }
 @media (max-width: 800px) { #project-team-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { #project-team-list { grid-template-columns: 1fr; } }

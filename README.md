@@ -81,3 +81,7 @@ python -m unittest discover -s tests -v
 - `providers.py` model sağlayıcılarını bağlar. `web/` tek sayfalık arayüzü içerir.
 
 Panel yerel kullanım için tasarlandı. Harici sağlayıcı seçersen görev ve ilgili bağlam o sağlayıcı tarafından işlenebilir. Test komutları Git kopyasında, paneli başlatan kullanıcının işletim sistemi yetkileriyle çalışır. `runs/`, proje hafızası ve yerel ortam dosyaları yayınlanan kaynak koddan ayrı tutulur.
+
+## Geliştirici
+
+[Tekin Teknoloji](https://tekinteknoloji.com)
