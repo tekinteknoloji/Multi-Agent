@@ -52,6 +52,7 @@ Her ajanın adı, çağrı etiketi, rol metni, sağlayıcısı ve modeli ayrı a
 
 - **Panoya yaz** ile not veya ek bırak. **Yaz ve ajanlara ilet** ile yanıt iste. Bir ajanı `@etiket` ile çağırabilir veya **Yanıtla** ile bir mesajı alıntılayabilirsin.
 - Etiketsiz isteklerde etkin bir **Supervisor / Orchestrator** varsa yönlendirmeyi o üstlenir. “Önce UI/UX, ardından QA & Review” gibi açıkça yazılan dal sırası korunur. Yanıtlar geldikten sonra **Ekibi özetle** aynı isteğe verilen katkıları birleştirir.
+- Yeni ajan yanıtlarında **Neden bu ajan?** yönlendirme yolunu, **Hangi kayıtları gördü?** çağrıya eklenen kaynakları gösterir. Karar, mesaj ve rapor bağlantıları kaynak kaydı açar.
 - **Taslağa al** bir pano mesajını görev alanına taşır. **Kod turlarında Git farkını ve test kanıtını izle** seçeneği, ajanı kod ve test çıktısına ek gözlemci olarak çağırır.
 - Üst çubuktan **Açık**, **Koyu** veya **Sistem** temasını seçebilirsin.
 
@@ -60,10 +61,24 @@ Her ajanın adı, çağrı etiketi, rol metni, sağlayıcısı ve modeli ayrı a
 - Projeye bağlı sohbetler, ekler, ekip ayarları ve raporlar kaynak klasördeki `Proje-Hafizasi/` altında saklanır. Klasörü projeyle birlikte taşıyabilir veya seçili konuyu **Hafızayı indir** ile ZIP olarak alabilirsin.
 - Ajanın önerisi, sen **Kararı onayla** dediğinde geçerli proje kararına dönüşür. Yeni bir karar öncekinin yerine geçecekse onay sırasında eski kaydı seç. Pano güncel ve değiştirilmiş kararları kaynak mesajlarıyla gösterir.
 - Ajan çağrısına ilgili kısa geçmiş, onaylı kararlar ve test kanıtı eklenir. Panel test çıktısının yanında komutu, çıkış kodunu, başlangıç commit’ini ve Git farkının özetini saklar. Test raporu sorgusunda ajan kayıtları seçer, panel kapsamı kayıttan gösterir.
+- İlgili kabul kriterleri ajana durumları ve bağlı test kimlikleriyle iletilir. **Hangi kayıtları gördü?** bölümünden ilgili görevin kriterlerini açabilirsin.
 
 ## Uygulama, geri alma ve kesintiden devam
 
 Panel geliştirmeye kaynak projenin commit edilmiş `HEAD` sürümünden başlar. Test veya denetim düzeltme isterse aynı Git kopyasında düzeltme turu açılır. İlk turun ardından en fazla iki otomatik düzeltme yapılır. Git farkı, test sonucu ve denetim kararı panelde görülebilir.
+
+- Planlama adımına atanan **Supervisor**, bağımlılıkları ve kabul kontrolleriyle birlikte alt görevleri planlar.
+- **Test ayarları** altında ayrı bir **Birleşik entegrasyon testi** komutu tanımlayabilirsin. Panel iki komutu aynı Git kopyasında çalıştırır ve kanıtlarını ayrı kaydeder.
+- Büyük metin farkları bölüm bölüm denetlenir. **Dosya bazlı denetim** çıktısı her dosyanın hangi bölümlerde incelendiğini gösterir.
+- Test kanıtıyla çürütülen bir bölüm bulgusunu **Denetim bulgularını incele** ekranında rapor seçip gerekçe yazarak kapatabilirsin. Panel ilk denetim kararını ve kapatma kaydını saklar. Aynı Git farkındaki kayıtlı testler başarılıysa ve açık bulgu kalmadıysa görev **İncelemeye hazır** olur.
+
+**Görev geçmişi** bölümünde seçili projenin eski çalışmalarını açabilirsin.
+Talep, kayıtlı ekip, tur başına Git farkı, test ve denetim sonuçları ile
+uygulama ve geri alma olayları aynı görev görünümünde yer alır.
+**Kabul kriterleri** bölümünde bir kriteri aynı projedeki bir test
+raporunda adlandırılmış kontrole bağlayabilirsin. Başarılı kontrol **Doğrulandı**,
+başarısız kontrol **Başarısız** olarak görünür. Atlanan, bağlı olmayan
+veya doğrulanamayan kontroller için **Kanıt yok** gösterilir.
 
 Onaylanan fark kaynak çalışma ağacına yazılır. **Geri al** son uygulamayı tersine çevirir. **Yeniden uygula** geri alınan farkı tekrar yazar. Panel kaynak dalı, commit’i ve bekleyen dosya değişikliklerini kontrol eder. Commit ve push ayrı Git işlemleridir.
 

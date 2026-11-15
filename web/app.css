@@ -145,5 +145,18 @@ dialog pre { max-height: min(45vh, 430px); }
 .team-branch .extra-agent-row { border-top: 1px solid var(--line); padding-top: 7px; }
 .project-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; border-top: 1px solid var(--line); padding-block: 15px 24px; color: var(--muted); font-size: .85rem; }
 .project-footer a { color: var(--accent); font-weight: 650; margin-inline-start: .3em; }
+#history-detail { margin-top: 12px; overflow-wrap: anywhere; }
+#history-detail h3 { margin: 16px 0 8px; font-size: 1rem; }
+#history-detail li { margin-block: 5px; }
+#history-detail pre { min-height: 0; }
+.criterion { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; border-top: 1px solid var(--line); padding-block: 8px; }
+.criterion label { flex: 1 1 260px; min-width: 0; margin: 0; }
+.criterion .status, .criterion a { align-self: center; }
+.agent-trace { margin: 8px 0 0; padding-top: 6px; }
+.agent-trace summary { font-size: .82rem; }
+.agent-trace h4 { margin: 9px 0 3px; font-size: .8rem; }
+.agent-trace ul { margin: 0 0 6px; padding-inline-start: 19px; }
+.agent-trace li { margin-block: 4px; font-size: .82rem; overflow-wrap: anywhere; }
+.agent-trace a { color: var(--accent); }
 @media (max-width: 800px) { #project-team-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { #project-team-list { grid-template-columns: 1fr; } }

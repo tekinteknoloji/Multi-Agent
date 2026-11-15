@@ -24,6 +24,7 @@ RUN_FILES = {
     "00-summary.md": "Kapsam ve sonuç",
     "00-team.json": "Çalışmadaki ekip ve görevler",
     "01-task.md": "İlk görev",
+    "01-criteria.json": "Kabul kriterleri",
     "01-base.txt": "Başlangıç commit’i",
     "02-plan.md": "İlk plan",
     "02-plan-sent.md": "Onaylanan görev",
@@ -33,6 +34,10 @@ ROUND_FILES = {
     "04-change.diff": "Git farkı",
     "05-check.txt": "Test sonucu",
     "05-check-evidence.json": "Test kanıt kaydı",
+    "05-integration.txt": "Birleşik entegrasyon testi",
+    "05-integration-evidence.json": "Entegrasyon test kanıtı",
+    "06-file-review.json": "Dosya bazlı denetim",
+    "06-finding-resolutions.json": "Bulgu kapatma kayıtları",
     "06-review.json": "Denetim kararı",
     "07-observers.json": "Ek ajan gözlemleri",
 }
@@ -193,7 +198,8 @@ class Discussions:
             return message_id
 
     def post(self, topic_id, author, text, *, model=None, reply_to=None, run_id=None, extras=None, agent_id=None,
-             project=None, uploads=None, agent_profile=None, use_base=True, decision=None, proposal=None, event_id=None):
+             project=None, uploads=None, agent_profile=None, use_base=True, decision=None, proposal=None,
+             event_id=None, trace=None):
         with self.lock:
             if topic_id is None:
                 topic_id = uuid.uuid4().hex[:12]
@@ -216,6 +222,8 @@ class Discussions:
                        "agent_id": agent_id, "agent_profile": agent_profile}
             if event_id:
                 message["event_id"] = event_id
+            if trace:
+                message["trace"] = trace
             if agent_id and proposal:
                 message["proposal"] = proposal
             if decision:
@@ -440,6 +448,7 @@ def transcript(topic, budget=3_500, *, request_id=None, root=None, attachment_ro
                        and message["author"] == "Kullanıcı"), None)
         if parent:
             context["planning_request"] = parent["text"]
+            context["planning_source"] = serialize_message(parent, 250)
     if root is not None and not topic.get("project"):
         files = reports(topic, root)
         latest = (run_ids(topic) or [None])[-1]
@@ -558,7 +567,17 @@ def requested_branch_order(request):
     return order if len(order) > 1 else []
 
 
-def route_request(planner, context, extras=None, use_base=True):
+def exclusive_branch_scope(request):
+    import agent_roles
+    normalized = plain(request)
+    if not re.search(r"\b(?:yalniz|yalnizca|sadece)\b", normalized):
+        return set()
+    branches = {key for key, (label, _) in agent_roles.BRANCHES.items()
+                if re.search(rf"(?<!\w){re.escape(plain(label))}\s+dal\w*", normalized)}
+    return branches
+
+
+def route_request(planner, context, extras=None, use_base=True, selected_by_model=None):
     import agent_roles
     extras = extras or {}
     roster = {**({key: {"name": label} for key, label in ROLES.items()} if use_base else {}),
@@ -566,10 +585,13 @@ def route_request(planner, context, extras=None, use_base=True):
                        **agent_roles.assignment(agent)}
                  for key, agent in extras.items()}}
     branch_order = requested_branch_order(context["request"]) if not use_base else []
-    if branch_order:
+    scoped_branches = {branch for branch, _ in branch_order}
+    if not scoped_branches and not use_base:
+        scoped_branches = exclusive_branch_scope(context["request"])
+    if scoped_branches:
         roster = {key: member for key, member in roster.items()
-                  if member["branch"] in {branch for branch, _ in branch_order}}
-        if any(not any(member["branch"] == branch for member in roster.values()) for branch, _ in branch_order):
+                  if member["branch"] in scoped_branches}
+        if scoped_branches - {member["branch"] for member in roster.values()}:
             raise ValueError("İstenen dallardan en az birinde etkin ajan yok.")
     max_turns = max(6, len(roster))
     schema = {"type": "object", "required": ["responders"], "properties": {
@@ -593,6 +615,8 @@ def route_request(planner, context, extras=None, use_base=True):
         not isinstance(role, str) or role not in roster for role in responders
     ):
         raise ValueError("Model pano isteğini yönlendiremedi.")
+    if selected_by_model is not None:
+        selected_by_model.update(responders)
     if branch_order:
         turns = []
         for branch, clause in branch_order:
@@ -634,11 +658,39 @@ def wants_test_report(request):
                 and not re.search(r"\b(?:kabul testi|test(?:leri|i|ler)?)\s+(?:yaz|hazirla|olustur|tasarla)\w*", query))
 
 
-def opinion(role, models, context, root, focus="", agent=None, synthesis=False):
+def decision_criteria_answer(context):
+    request = plain(context["request"])
+    if not re.search(r"\bguncel\b", request) or not re.search(r"\bkarar\w*", request):
+        return None
+    criteria = context.get("criterion_records") or []
+    if not criteria:
+        return None
+    ignored = {"kabul", "karar", "kararini", "karari", "guncel", "test", "rapor", "kriter", "kriterini"}
+    query_words = keywords(request) - ignored
+    records = [item for item in context.get("decision_records", [])
+               if item.get("active") and query_words & keywords(item["text"])]
+    if not records:
+        return None
+    lines = ["Güncel onaylı kararlar"]
+    for item in records:
+        lines.append(f"- {item['text']} [{item['topic']}/{item['id']}] (Pano onayı: {item['time'][:10]})")
+    lines.extend(["", "Kayıtlı kabul kriterleri"])
+    for item in criteria:
+        line = f"- {item['title']} · {item['status']}"
+        if item.get("report_available"):
+            line += f" · [{item['report_run']}/{item['report']}] · {item['check']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def opinion(role, models, context, root, focus="", agent=None, synthesis=False, on_context=None):
     quote = context.get("reply_to") or {}
     if (role == "review" or (agent and agent.get("slot") == "review")) and (
         quote.get("author") == "Mimar" or (quote.get("agent_profile") or {}).get("slot") == "plan"
     ):
+        if on_context:
+            on_context({"project_memory": context.get("project_memory"), "reply_to": quote,
+                        "idea": context.get("planning_source") or context.get("idea")})
         return audit_quoted_plan(agent if agent and agent.get("provider") else models[role], context), ""
     name = agent["name"] if agent else ROLES[role]
     instruction = (
@@ -652,6 +704,11 @@ def opinion(role, models, context, root, focus="", agent=None, synthesis=False):
         "project_memory onaylı proje kararlarını ve ilgili geçmişi içerir. Normal mesajını answer alanında yaz. "
         "Karar geçmişinde Değiştirildi durumundaki kayıt artık geçerli değildir. Kullanıcı eski kararı sorarsa "
         "bu kaydı ve yerine geçen kararı kendi kaynak kimlikleriyle ayrı aktar. Geçerlilik için onay kayıtlarını kullan. "
+        "decision_records içindeki active=true olan ilgili kararları ayrı ayrı ve kendi konularıyla birlikte yaz. "
+        "Bir kararın replaces alanı yalnızca işaret ettiği kaydın değiştirildiğini gösterir. "
+        "Aynı konuyla ilişkili diğer active=true kararlar geçerlidir. Bir uyarı kararından söz ederken, "
+        "aynı oturumun zaman aşımı kararı da kayıtlı ve güncelse iki kararı ayrı maddelerde göster. "
+        "Kayıtlar desteklemedikçe bir kararı projenin tek geçerli kararı olarak niteleme. "
         "Eski ve yeni kararı anlatırken Pano onay tarihi alanındaki tarihleri aynen aktar. Değişiklik tarihi, "
         "yerine geçen kararın pano onay tarihidir. Tarih kayıtta yoksa tarih verme. "
         "Pano onayı gereksinimin kaynağıdır. Test raporu, yalnızca çıktıda açıkça sınanan davranışın kanıtıdır. "
@@ -672,7 +729,15 @@ def opinion(role, models, context, root, focus="", agent=None, synthesis=False):
     if focus:
         context = {**context, "kullanıcının isteğinden çıkarılan odak": focus}
         instruction += "\nOdak belirtilmişse kendi görevine ait somut katkıyı yaz. İsteği tekrar etme."
-    records = (context.get("test_evidence") or []) if not synthesis and wants_test_report(context["request"]) else []
+    criterion_request = bool(re.search(r"\bkabul kriter", plain(context["request"])))
+    records = (context.get("test_evidence") or []) if not synthesis and not criterion_request and wants_test_report(context["request"]) else []
+    if criterion_request:
+        instruction += (
+            "\nKayıtlı kabul kriterleri için yalnız criterion_records listesini kullan. Her kriter ayrı kayıttır. "
+            "title ve status alanlarını koru. report_available true ise yalnız o kaydın report_run, report ve check "
+            "alanlarını birbirine bağlı olarak aktar. Mevcut diğer test raporlarını bu kriterle eşleştirme. "
+            "Pano kararlarını decision_records alanından ayrı aktar. Kriter kaydı yoksa bunu söyle."
+        )
     schema = OPINION_SCHEMA
     if synthesis:
         instruction += ("\nteam_responses alanındaki yanıtları gönderen ajan adıyla özetle ve ortak bir sonuç çıkar. "
@@ -688,6 +753,8 @@ def opinion(role, models, context, root, focus="", agent=None, synthesis=False):
             "Pano bu kayıtların doğrulanmış kapsamını gösterecektir. Bu durumda answer ve new_decision boş olsun. "
             "Diğer isteklerde report_lookup false ve test_evidence_ids boş liste olsun."
         )
+    if on_context:
+        on_context(context)
     if role == "code":
         raw = codex_opinion(instruction + "\nYalnız şu şemaya uygun JSON döndür: " + json.dumps(schema)
                             + "\n\nPANO:\n" + json.dumps(context, ensure_ascii=False), root)
@@ -701,12 +768,41 @@ def opinion(role, models, context, root, focus="", agent=None, synthesis=False):
     if (not isinstance(data, dict) or not isinstance(data.get("answer"), str)
             or not isinstance(data.get("new_decision"), str)):
         raise ValueError("Ajanın pano yanıtı doğrulanamadı.")
+    if criterion_request and not synthesis:
+        saved_answer = decision_criteria_answer(context)
+        if saved_answer:
+            return saved_answer, ""
     if records and data.get("report_lookup") is True and isinstance(data.get("test_evidence_ids"), list):
         import evidence
         return evidence.report_answer(data["test_evidence_ids"], records), ""
     answer = strip_proposal_heading(data["answer"])
     proposal = "" if synthesis else data["new_decision"].strip()[:1200]
     return answer or proposal, "" if decision_recap(proposal) else proposal
+
+
+def board_context_sources(context, topic, request, project_sources):
+    project = project_sources if context.get("project_memory") else {}
+    messages = {}
+    for item in [*project.get("messages", []), context.get("idea"), context.get("reply_to"),
+                 *context.get("messages", []), *context.get("older_matches", []),
+                 *context.get("team_responses", []), request]:
+        if item and item.get("id"):
+            messages[(item.get("topic", topic), item["id"])] = {
+                "topic": item.get("topic", topic), "id": item["id"], "author": item["author"],
+                "excerpt": item.get("excerpt", item.get("text", ""))[:250],
+            }
+    reports = {(item["run"], item["path"]): {"run": item["run"], "path": item["path"]}
+               for item in [*project.get("reports", []), *context.get("reports", []),
+                            *context.get("test_evidence", [])]}
+    return {
+        "decisions": [{key: item[key] for key in ("id", "topic", "text", "active", "time")}
+                      for item in (context.get("decision_records") or project.get("decisions", []))],
+        "criteria": [{key: item[key] for key in ("id", "title", "status", "task_run", "report_run",
+                                                "report", "check", "report_available")}
+                     for item in context.get("criterion_records", [])],
+        "reports": list(reports.values()), "messages": list(messages.values()),
+        "attachments": [{key: item[key] for key in ("id", "name")} for item in context.get("attachments", [])],
+    }
 
 
 def audit_quoted_plan(model, context):

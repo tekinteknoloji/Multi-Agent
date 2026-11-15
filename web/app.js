@@ -29,6 +29,7 @@ const stages = {
   error: ["Akış durdu", -1],
 };
 const outputNames = {plan: "Plan", code: "Geliştirme günlüğü", diff: "Git farkı", test: "Test",
+                     integration: "Birleşik entegrasyon testi", coverage: "Dosya bazlı denetim",
                      review: "Denetim", observers: "Ek ajan gözlemleri"};
 const decisions = {
   HUMAN_REVIEW: "Test geçti. Yerel denetçi bir engel bildirmedi.",
@@ -371,16 +372,105 @@ async function selectOutput(key) {
   download.href = `${url}?download=1`;
   content.textContent = "Yükleniyor…";
   try {
-    const response = await fetch(url);
+    const response = await fetch(key.startsWith("coverage-") ? download.href : url);
     if (!response.ok) throw new Error("Çıktı yüklenemedi.");
     let value = await response.text();
     if (key.startsWith("review-")) {
       const result = JSON.parse(value);
       value = [decisions[result.status], result.review.reason, ...result.review.findings].filter(Boolean).join("\n\n");
     }
+    if (key.startsWith("coverage-")) value = formatFileReview(JSON.parse(value));
     if (request === outputRequest) content.textContent = value || "Dosya boş.";
   } catch (error) {
     if (request === outputRequest) content.textContent = error.message;
+  }
+}
+
+function formatFileReview(record) {
+  const decisions = new Map(record.decisions.map(item => [item.part, item.decision]));
+  return record.files.map(file => {
+    const states = file.parts.map(part => decisions.get(part));
+    const status = states.includes("CHANGES_REQUESTED") ? "Bölüm düzeltme istedi"
+      : states.every(state => state === "PASS") ? "İncelendi" : "Bekliyor";
+    return `${file.path} · ${status} · Bölüm ${file.parts.join(", ")}`;
+  }).join("\n");
+}
+
+let findingKey = "";
+function renderFindings(current) {
+  const review = current?.finding_review;
+  const section = byId("finding-review");
+  section.hidden = !review;
+  const resolutions = current?.finding_resolutions || [];
+  const key = JSON.stringify([current?.id, review?.revision, resolutions]);
+  if (key === findingKey) return;
+  findingKey = key;
+  const list = byId("finding-items");
+  list.replaceChildren();
+  if (!review) return;
+  for (const item of review.findings) {
+    const closed = resolutions.find(record => record.part === item.part && record.revision === review.revision);
+    const details = document.createElement("details");
+    const title = document.createElement("summary");
+    title.textContent = `Bölüm ${item.part} · ${item.files.join(", ")} · ${closed ? "Kapatıldı" : "Açık"}`;
+    const finding = document.createElement("pre");
+    finding.textContent = [item.reason, ...item.findings].join("\n");
+    details.append(title, finding);
+    const evidenceLink = (phase) => `/api/runs/${current.id}/${phase === "05-integration" ? "integration" : "test"}-${review.round}`;
+    if (closed) {
+      const note = document.createElement("p");
+      note.textContent = closed.explanation;
+      const source = document.createElement("a");
+      source.href = evidenceLink(closed.report.split("/").pop().replace(".txt", ""));
+      source.textContent = "Bağlı test raporu";
+      details.append(note, source);
+    } else if (review.reports.length) {
+      const form = document.createElement("form");
+      const report = document.createElement("select");
+      const reason = document.createElement("textarea");
+      const source = document.createElement("a");
+      const submit = document.createElement("button");
+      const error = document.createElement("p");
+      for (const phase of review.reports) {
+        report.add(new Option(phase === "05-integration" ? "Birleşik entegrasyon testi" : "Panel testi", phase));
+      }
+      if (review.reports.includes("05-integration")) report.value = "05-integration";
+      source.href = evidenceLink(report.value);
+      source.target = "_blank";
+      source.rel = "noopener";
+      source.textContent = "Test raporunu aç";
+      report.addEventListener("change", () => { source.href = evidenceLink(report.value); });
+      reason.required = true;
+      reason.maxLength = 4000;
+      reason.rows = 4;
+      submit.type = "submit";
+      submit.textContent = "Bulguyu kapat";
+      error.setAttribute("role", "alert");
+      const reportLabel = document.createElement("label");
+      reportLabel.append("Test kanıtı", report);
+      const reasonLabel = document.createElement("label");
+      reasonLabel.append("Kapatma gerekçesi", reason);
+      form.append(reportLabel, source, reasonLabel, submit, error);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submit.disabled = true;
+        error.textContent = "";
+        try {
+          const response = await fetch("/api/review/close", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id: current.id, part: item.part, revision: review.revision,
+              report: report.value, reason: reason.value}),
+          });
+          if (!response.ok) throw new Error((await response.json()).error);
+          await refresh();
+        } catch (failure) {
+          error.textContent = failure.message;
+          submit.disabled = false;
+        }
+      });
+      details.append(form);
+    }
+    list.append(details);
   }
 }
 
@@ -389,6 +479,7 @@ function render(current) {
   toggleButtons();
   updateModelLabels();
   renderPlan(current);
+  renderFindings(current);
   if (!job) return;
   byId("apply-actions").hidden = job.stage !== "HUMAN_REVIEW" || job.running || !job.target;
   const [label, position] = stages[job.stage] || ["Çalışıyor", 0];
@@ -466,7 +557,8 @@ async function sendPlan(action) {
   try {
     const response = await fetch("/api/plan", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({id: job.id, version: job.plan_version, action, plan, check: byId("check").value}),
+      body: JSON.stringify({id: job.id, version: job.plan_version, action, plan, check: byId("check").value,
+        integration: byId("integration").value}),
     });
     if (!response.ok) throw new Error((await response.json()).error);
     job.running = true;
@@ -601,6 +693,187 @@ confirmRevert.addEventListener("click", async () => {
   }
 });
 
+let historyProject = "";
+let historyRequest = 0;
+const historySelect = byId("history-run");
+const historyStatus = byId("history-status");
+const historyDetail = byId("history-detail");
+
+function historyUrl(project, run = "", file = "") {
+  const params = new URLSearchParams({repo: project});
+  if (run) params.set("run", run);
+  if (file) params.set("file", file);
+  return `/api/history?${params}`;
+}
+
+function historySection(parent, title, content) {
+  const section = document.createElement("details");
+  const label = document.createElement("summary");
+  label.textContent = title;
+  const body = document.createElement("pre");
+  body.textContent = content;
+  section.append(label, body);
+  parent.append(section);
+  return section;
+}
+
+function renderCriteria(data) {
+  const project = historyProject;
+  const section = document.createElement("section");
+  const heading = document.createElement("h3");
+  heading.textContent = "Kabul kriterleri";
+  section.append(heading);
+  const error = document.createElement("p");
+  error.className = "error";
+  error.setAttribute("role", "alert");
+  error.hidden = true;
+  section.append(error);
+  for (const criterion of [...data.criteria, null]) {
+    const form = document.createElement("form");
+    form.className = "criterion";
+    const label = document.createElement("label");
+    label.textContent = criterion ? "Kriter" : "Yeni kabul kriteri";
+    const title = document.createElement("input");
+    title.required = true;
+    title.maxLength = 500;
+    title.value = criterion?.title || "";
+    label.append(title);
+    const evidenceLabel = document.createElement("label");
+    evidenceLabel.textContent = "Bağlı test sonucu";
+    const select = document.createElement("select");
+    select.append(new Option("Kanıt bağlama", ""), ...data.test_checks.map((check, index) =>
+      new Option(`${check.run === data.id ? "" : check.run + " · "}${check.title} · ${check.name}`, String(index))));
+    const existing = data.test_checks.findIndex(check => check.run === criterion?.report_run && check.report === criterion?.report
+      && check.name === criterion?.check);
+    if (existing >= 0) select.value = String(existing);
+    evidenceLabel.append(select);
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.className = "secondary";
+    save.textContent = criterion ? "Kriteri kaydet" : "Kriter ekle";
+    form.append(label, evidenceLabel, save);
+    if (criterion) {
+      const badge = document.createElement("strong");
+      badge.className = "status";
+      badge.dataset.kind = criterion.status === "Başarısız" ? "error" : "";
+      badge.textContent = criterion.status;
+      form.append(badge);
+      if (criterion.report_available) {
+        const link = document.createElement("a");
+        link.className = "download";
+        link.href = historyUrl(project, criterion.report_run, criterion.report);
+        link.textContent = "Bağlı raporu indir";
+        form.append(link);
+      }
+    }
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      save.disabled = true;
+      error.hidden = true;
+      const check = select.value === "" ? null : data.test_checks[Number(select.value)];
+      try {
+        const response = await fetch("/api/history/criteria", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({repo: project, run: data.id, id: criterion?.id, title: title.value,
+            report_run: check?.run ?? null, report: check?.report ?? null, check: check?.name ?? null}),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error);
+        if (historyProject === project && historySelect.value === data.id) renderHistory(result);
+      } catch (problem) {
+        error.textContent = problem.message;
+        error.hidden = false;
+      } finally {
+        save.disabled = false;
+      }
+    });
+    section.append(form);
+  }
+  return section;
+}
+
+function renderHistory(data) {
+  const fragment = document.createDocumentFragment();
+  const heading = document.createElement("h3");
+  heading.textContent = data.title;
+  const info = document.createElement("p");
+  info.className = "hint";
+  info.textContent = [data.id, data.base && `Başlangıç commit’i ${data.base}`].filter(Boolean).join(" · ");
+  fragment.append(heading, info);
+  historySection(fragment, "Talep", data.task || "Talep kaydı bulunamadı.").open = true;
+  fragment.append(renderCriteria(data));
+  const members = data.team.map(agent =>
+    [agent.name, agent.branch_label || agent.slot, agent.role_label, agent.model || agent.provider, agent.duty]
+      .filter(Boolean).join(" · "));
+  historySection(fragment, "Ajanlar", members.join("\n") || "Bu çalışmaya ait ekip kaydı bulunamadı.").open = true;
+  if (data.plan) historySection(fragment, "Plan ve onaylanan kapsam", data.plan);
+  if (data.notes.length) historySection(fragment, "Görev durumları", data.notes.map(item => item.text).join("\n"));
+  const dates = new Intl.DateTimeFormat("tr-TR", {dateStyle: "short", timeStyle: "short"});
+  const operations = data.operations.map(item => `${dates.format(new Date(item.time))} · ${item.text}`).join("\n");
+  historySection(fragment, "Uygulama ve geri alma kayıtları",
+    operations || "Bu görev için uygulama veya geri alma kaydı yok.").open = true;
+  for (const review of data.plan_reviews) historySection(fragment, review.title, review.text);
+  for (const round of data.rounds) {
+    const title = document.createElement("h3");
+    title.textContent = `Tur ${round.number}`;
+    fragment.append(title);
+    for (const [label, value] of [["Git farkı", round.diff], ["Test sonucu", round.test],
+      ["Birleşik entegrasyon testi", round.integration], ["Dosya bazlı denetim", round.coverage && formatFileReview(round.coverage)],
+      ["Denetim sonucu", round.review]]) {
+      const section = historySection(fragment, label, value || "Kayıt yok.");
+      section.open = Boolean(value);
+    }
+    const links = document.createElement("div");
+    links.className = "actions";
+    for (const report of round.files) {
+      const link = document.createElement("a");
+      link.className = "download";
+      link.href = historyUrl(historyProject, data.id, report.path);
+      link.textContent = report.title;
+      links.append(link);
+    }
+    fragment.append(links);
+  }
+  historyDetail.replaceChildren(fragment);
+}
+
+async function loadHistory(project, run) {
+  const changed = projectKey(historyProject) !== projectKey(project);
+  historyProject = project;
+  const requested = ++historyRequest;
+  const selected = changed ? "" : historySelect.value;
+  if (changed) {
+    historyDetail.replaceChildren();
+    byId("history-picker").hidden = true;
+  }
+  try {
+    const response = await fetch(historyUrl(project, run));
+    const data = await response.json();
+    if (requested !== historyRequest) return;
+    if (!response.ok) throw new Error(data.error);
+    if (run) {
+      renderHistory(data);
+      historyStatus.textContent = "";
+      return;
+    }
+    historyStatus.textContent = data.runs.length ? "" : "Bu projede henüz kayıtlı görev yok.";
+    byId("history-picker").hidden = !data.runs.length;
+    historySelect.replaceChildren(new Option("Görev seç", ""), ...data.runs.map(item =>
+      new Option(`${item.title} · ${item.time.slice(0, 10)} · ${item.id}`, item.id)));
+    if (data.runs.some(item => item.id === selected)) {
+      historySelect.value = selected;
+      loadHistory(project, selected);
+    }
+  } catch (error) {
+    if (requested === historyRequest) historyStatus.textContent = error.message;
+  }
+}
+
+historySelect.addEventListener("change", () => {
+  historyDetail.replaceChildren();
+  if (historySelect.value) loadHistory(historyProject, historySelect.value);
+});
+
 async function refresh() {
   if (polling || submitting || sendingPlan) return;
   polling = true;
@@ -612,9 +885,15 @@ async function refresh() {
       repo.value = state.job.project;
       preparedMemoryProject = state.job.project;
       if (state.job.board_id) selectTopic(state.job.board_id);
-      byId("check").value = (state.job.check || []).join("\n");
+      const check = state.job.check;
+      byId("check").value = (Array.isArray(check) ? check : check?.["05-check"] || []).join("\n");
+      byId("integration").value = (check?.["05-integration"] || []).join("\n");
       loadProjectTeam(state.job.project);
       refreshBoard(true);
+      loadHistory(state.job.project);
+    } else if (job && state.job && (job.stage !== state.job.stage || job.running !== state.job.running)
+        && !state.job.running && projectKey(historyProject) === projectKey(state.job.project)) {
+      loadHistory(historyProject);
     }
     renderApplication(state.application);
     render(state.job);

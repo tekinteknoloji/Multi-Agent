@@ -23,6 +23,9 @@ import team
 import discussion
 import providers
 import agent_roles
+import job_history
+import evidence
+import test_worker
 from worker_process import round_lock
 
 REVERTED_MESSAGE = "Panelin uyguladığı değişiklik geri alındı."
@@ -40,6 +43,8 @@ ARTIFACTS = {
     "code": "03-codex.txt",
     "diff": "04-change.diff",
     "test": "05-check.txt",
+    "integration": "05-integration.txt",
+    "coverage": "06-file-review.json",
     "observers": "07-observers.json",
     "review": "06-review.json",
 }
@@ -105,6 +110,39 @@ def artifact_paths(out):
             if key != "plan":
                 paths[f"{key}-{number}"] = folder / name
     return paths
+
+
+def review_findings(out):
+    for number in range(team.MAX_CORRECTIONS + 1, 0, -1):
+        folder = out / f"round-{number:02}"
+        final = folder / "06-review.json"
+        if final.is_file():
+            break
+    else:
+        return None
+    report = final.read_text(encoding="utf-8")
+    result = json.loads(report)
+    progress = folder / "06-review-progress.json"
+    coverage_path = folder / "06-file-review.json"
+    if result["status"] != "CHANGES_REQUESTED" or not progress.is_file() or not coverage_path.is_file():
+        return None
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    reviews = json.loads(progress.read_text(encoding="utf-8"))["results"]
+    decisions = [{"part": part, "decision": review["decision"]} for part, review in enumerate(reviews, 1)]
+    if decisions != coverage["decisions"] or {row["part"] for row in decisions} != {
+        part for file in coverage["files"] for part in file["parts"]
+    }:
+        return None
+    findings = [
+        {"part": part, "files": [file["path"] for file in coverage["files"] if part in file["parts"]],
+         "reason": review["reason"], "findings": review["findings"]}
+        for part, review in enumerate(reviews, 1) if review["decision"] == "CHANGES_REQUESTED"
+    ]
+    if not findings:
+        return None
+    revision = evidence.digest(json.dumps([report, coverage, reviews], ensure_ascii=False, sort_keys=True))
+    return {"round": number, "revision": revision, "diff_hash": coverage["diff_sha256"], "findings": findings,
+            "reports": [phase for phase in ("05-check", "05-integration") if (folder / f"{phase}-evidence.json").is_file()]}
 
 
 class Dashboard(ThreadingHTTPServer):
@@ -321,6 +359,8 @@ class Dashboard(ThreadingHTTPServer):
             query = request["text"] + " " + quote.get("text", "")[:1000] + " " + (quote.get("run_id") or "")
             project_history = (providers.project_context(topic["project"], query, topic_id=topic_id, structured=True)
                                if topic.get("project") else {})
+            project_sources = project_history.pop("context_sources", {})
+            project_sources["decisions"] = project_history.get("decision_records", [])
             context.update(project_history)
             if not use_base and not extras:
                 raise ValueError("Bu proje ekibinde etkin ajan yok.")
@@ -328,23 +368,38 @@ class Dashboard(ThreadingHTTPServer):
             supervisor = next((member for member in extras.values() if member.get("role") == "supervisor"), None)
             coordinator = supervisor or planner
             router = models["plan"] if use_base else coordinator or next(iter(extras.values()))
+            selected_by_model = set()
             if mode in {"opinions", "team"}:
+                routing = {"mode": "team"}
                 turns = [(role, "Kullanıcının fikri hakkında kendi görüşünü yaz.")
                          for role in ((list(discussion.ROLES) + list(extras) if mode == "team" else discussion.ROLES)
                                       if use_base else extras)]
             elif mode == "synthesis":
+                routing = {"mode": "synthesis", "router": coordinator["name"] if coordinator else "Mimar"}
                 if not use_base and coordinator is None:
                     raise ValueError("Projeye bir koordinatör veya planlama ajanı ata.")
                 turns = [(coordinator["id"] if coordinator else "plan", "Ekibin görüşlerini ve son kullanıcı notunu değerlendir; uygun yaklaşımı öner.")]
             else:
                 targets = discussion.explicit_responders(topic, request, extras, use_base)
-                turns = [(role, "") for role in targets] if targets else discussion.route_request(router, context, extras, use_base)
-            for role, focus in turns:
+                if targets:
+                    tagged = discussion.mentions(request["text"], extras, use_base) or request.get("mentions")
+                    routing = {"mode": "mention" if tagged else "reply"}
+                else:
+                    routing = {"mode": "routing", "router": router["name"] if isinstance(router, dict) else "Mimar",
+                               "supervisor": bool(supervisor),
+                               "ordered": bool(discussion.requested_branch_order(request["text"])),
+                               "scoped": bool(discussion.exclusive_branch_scope(request["text"]))}
+                turns = ([(role, "") for role in targets] if targets else
+                         discussion.route_request(router, context, extras, use_base, selected_by_model))
+            for position, (role, focus) in enumerate(turns, 1):
                 extra = extras.get(role)
                 label = extra["name"] if extra else discussion.ROLES[role]
                 with self.lock:
                     self.board_turn = {"id": topic["id"], "role": label}
                 model = extra["model"] if extra else models.get(role, "Codex")
+                trace = {"routing": {**routing, "position": position, "total": len(turns)}}
+                if routing["mode"] == "routing":
+                    trace["routing"]["branch_fallback"] = role not in selected_by_model
                 try:
                     if mode not in {"opinions", "team"}:
                         fresh = self.discussions.read(topic_id)
@@ -363,8 +418,11 @@ class Dashboard(ThreadingHTTPServer):
                                                         attachment_root=self.discussions.root)
                             context.update(project_history)
                             context["team_responses"] = contributions
+                    def capture(model_context):
+                        trace["sources"] = discussion.board_context_sources(model_context, topic_id, request, project_sources)
+
                     text, proposal = discussion.opinion(role, models, context, self.discussions.root, focus,
-                                                         agent=extra, synthesis=mode == "synthesis")
+                                                         agent=extra, synthesis=mode == "synthesis", on_context=capture)
                     if not text.strip():
                         raise RuntimeError("Boş yanıt alındı.")
                 except Exception as error:
@@ -375,7 +433,7 @@ class Dashboard(ThreadingHTTPServer):
                     if profile:
                         profile.update(agent_roles.assignment(extra))
                     self.discussions.post(topic_id, label, text, model=model, reply_to=request_id,
-                                          agent_id=role, agent_profile=profile, proposal=proposal)
+                                          agent_id=role, agent_profile=profile, proposal=proposal, trace=trace)
         except Exception as error:
             self.discussions.post(topic["id"], "Panel", f"İstek yönlendirilemedi: {error}")
         finally:
@@ -390,7 +448,7 @@ class Dashboard(ThreadingHTTPServer):
             raise ValueError("Geçerli bir plan metni gir.")
         if "\0" in plan:
             raise ValueError("Plan metni geçersiz.")
-        check = parse_check(data.get("check", ""))
+        check = parse_checks(data)
         with self.lock:
             job = self.job
             if (self.reverting or self.board_turn or not job or job["running"] or job["stage"] != "plan_ready"
@@ -471,6 +529,7 @@ class Dashboard(ThreadingHTTPServer):
         def on_review_ready(checkpoint):
             with self.lock:
                 self.review_context = checkpoint
+                job["review_target"] = {key: checkpoint[key] for key in ("repo", "base", "branch")}
                 job.update(stage=checkpoint["stage"], message="Git farkı bu adım için kaydedildi.")
                 self.save_job()
 
@@ -569,6 +628,62 @@ class Dashboard(ThreadingHTTPServer):
                 elif agent["state"] == "Bekliyor":
                     agent.update(state="Durdu", activity="Akış hata nedeniyle durdu.")
             record("Panel", str(error))
+
+    def close_review_finding(self, data):
+        if not isinstance(data, dict):
+            raise ValueError("Denetim bulgusu seç.")
+        reason = data.get("reason")
+        if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 4000 or "\0" in reason:
+            raise ValueError("Bulgunun neden çürütüldüğünü yaz.")
+        with self.lock:
+            job = self.job
+            if not job or data.get("id") != job["id"] or job["running"] or self.reverting or self.board_turn:
+                raise ValueError("Güncel ve tamamlanmış bir görev seç.")
+            if job["stage"] != "CHANGES_REQUESTED":
+                raise ValueError("Bu görevde kapatılabilir açık bulgu yok.")
+            out = team.ROOT / "runs" / job["id"]
+            review = review_findings(out)
+            if not review or data.get("revision") != review["revision"]:
+                raise ValueError("Denetim kaydı değişti. Güncel bulguyu aç.")
+            part = data.get("part")
+            item = next((row for row in review["findings"] if type(part) is int and row["part"] == part), None)
+            if item is None or data.get("report") not in review["reports"]:
+                raise ValueError("Açık bir bulgu ve bağlı test raporu seç.")
+            existing = job.get("finding_resolutions", [])
+            if any(row["part"] == item["part"] and row["revision"] == review["revision"] for row in existing):
+                raise ValueError("Bu bulgu zaten kapatıldı.")
+            repo = Path(job["project"]).resolve()
+            base = (out / "01-base.txt").read_text(encoding="utf-8").strip()
+            branch = job.get("review_target", {}).get("branch") or team.git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+            check_target(repo, base, branch)
+            folder, diff = team.saved_round(out, out / "repo", {**review, "number": review["round"], "base": base})
+            commands = dict(team.test_commands(job.get("check")))
+            if data["report"] not in commands:
+                raise ValueError("Bu rapor kayıtlı test komutuna ait değil.")
+            receipts = {phase: test_worker.completed_test(folder, base, diff, command, phase)
+                        for phase, command in commands.items()}
+            if not receipts or any(not result or result[0] != 0 for result in receipts.values()):
+                raise ValueError("Aynı Git farkındaki tüm kayıtlı testler geçmeli.")
+            record = {**item, "revision": review["revision"], "round": review["round"],
+                      "diff_sha256": review["diff_hash"], "explanation": reason.strip(), "author": "Kullanıcı",
+                      "report": f"round-{review['round']:02}/{data['report']}.txt",
+                      "output_sha256": evidence.digest(receipts[data["report"]][1]),
+                      "closed_at": datetime.now(timezone.utc).isoformat()}
+            resolutions = [*existing, record]
+            closed = {row["part"] for row in resolutions if row["revision"] == review["revision"]}
+            ready = all(row["part"] in closed for row in review["findings"])
+            message = f"Tur {review['round']} · Bölüm {item['part']} bulgusu kullanıcı tarafından test kanıtıyla kapatıldı."
+            team.save_round_file(folder, "06-finding-resolutions.json",
+                                 json.dumps(resolutions, ensure_ascii=False, indent=2))
+            job.update(finding_resolutions=resolutions, message=message)
+            job["timeline"].append({"time": record["closed_at"], "source": "Kullanıcı", "message": message})
+            if ready:
+                self.candidate = (repo, base, branch, diff)
+                job.update(stage="HUMAN_REVIEW", target={"repo": str(repo), "base": base, "branch": branch})
+            self.save_job()
+            if job.get("board_id"):
+                self.discussions.post(job["board_id"], "Panel", message, run_id=job["id"])
+        return {"ready": ready}
 
     def apply_job(self, job_id):
         with self.lock:
@@ -933,6 +1048,12 @@ def parse_check(value):
     return check
 
 
+def parse_checks(data):
+    check = parse_check(data.get("check", ""))
+    integration = parse_check(data.get("integration", ""))
+    return {"05-check": check, "05-integration": integration} if integration else check
+
+
 def parse_job(data):
     if not isinstance(data, dict):
         raise ValueError("İş bilgileri okunamadı.")
@@ -956,7 +1077,7 @@ def parse_job(data):
         raise ValueError("Çalıştırma türü geçersiz.")
     if any(not name or "cloud" in name.lower() for name in (planner, reviewer)):
         raise ValueError("İki rol için de yerel Ollama modeli seç.")
-    check = parse_check(data.get("check", ""))
+    check = parse_checks(data)
     return repo, task, planner, reviewer, execute, check if execute else None
 
 
@@ -1012,6 +1133,24 @@ class Handler(BaseHTTPRequestHandler):
                 project = memory_project_path(raw) if raw else None
                 self.send_json(team_payload(project))
             except (ValueError, OSError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
+        if url.path == "/api/history":
+            query = parse_qs(url.query)
+            try:
+                project = memory_project_path(query.get("repo", [None])[0])
+                run = query.get("run", [None])[0]
+                filename = query.get("file", [None])[0]
+                if filename and not run:
+                    raise ValueError("Önce bir görev seç.")
+                if not run:
+                    self.send_json({"runs": job_history.task_history(project)})
+                elif filename:
+                    path = job_history.task_detail(project, run, filename)
+                    self.reply(path.read_bytes(), "text/plain; charset=utf-8", attachment=path.name)
+                else:
+                    self.send_json(job_history.task_detail(project, run))
+            except (OSError, ValueError) as error:
                 self.send_json({"error": str(error)}, 400)
             return
         if url.path == "/api/board":
@@ -1081,6 +1220,8 @@ class Handler(BaseHTTPRequestHandler):
         out = team.ROOT / "runs" / job["id"] if job else None
         if url.path == "/api/state":
             if job:
+                if not job["running"] and (job["stage"] == "CHANGES_REQUESTED" or job.get("finding_resolutions")):
+                    job["finding_review"] = review_findings(out)
                 job["folder"] = str(out)
                 job["artifacts"] = [key for key, path in artifact_paths(out).items() if path.is_file()]
             self.send_json({"job": job, "application": application})
@@ -1108,7 +1249,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if (
-            self.path not in {"/api/run", "/api/apply", "/api/revert", "/api/reapply", "/api/project", "/api/plan", "/api/board", "/api/agents", "/api/project-team"}
+            self.path not in {"/api/run", "/api/apply", "/api/revert", "/api/reapply", "/api/project", "/api/plan", "/api/board", "/api/agents", "/api/project-team", "/api/history/criteria", "/api/review/close"}
             or not self.valid_host()
             or self.headers.get("Origin") != self.server.origin
         ):
@@ -1128,6 +1269,23 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Uygulanacak iş seçilmedi.")
         except (ValueError, OSError) as error:
             self.send_json({"error": str(error)}, 400)
+            return
+        if self.path == "/api/review/close":
+            try:
+                self.send_json(self.server.close_review_finding(data))
+            except (ValueError, OSError, RuntimeError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
+        if self.path == "/api/history/criteria":
+            try:
+                if not isinstance(data, dict) or not isinstance(data.get("run"), str):
+                    raise ValueError("Önce bir görev seç.")
+                project = memory_project_path(data.get("repo"))
+                with self.server.lock:
+                    result = job_history.save_criterion(project, data["run"], data)
+                self.send_json(result)
+            except (OSError, ValueError) as error:
+                self.send_json({"error": str(error)}, 400)
             return
         if self.path == "/api/board":
             try:

@@ -71,6 +71,101 @@ function updateBoardControls() {
     : "Ajanlara iletmek için Ekip ekranından model ve görev seç.";
 }
 
+function boardSourceLink(topic, id, label) {
+  const link = document.createElement("a");
+  link.href = `#message-${id}`;
+  link.textContent = label;
+  link.addEventListener("click", event => {
+    event.preventDefault();
+    if (topicId !== topic) selectTopic(topic);
+    byId("board-search").value = "";
+    lastMessageKey = "";
+    decisionTarget = id;
+    refreshBoard();
+  });
+  return link;
+}
+
+function renderAgentTrace(message, topic) {
+  const {routing, sources} = message.trace;
+  const fragment = document.createDocumentFragment();
+  const group = (label) => {
+    const detail = document.createElement("details");
+    detail.className = "agent-trace";
+    const summary = document.createElement("summary");
+    summary.textContent = label;
+    detail.append(summary);
+    fragment.append(detail);
+    return detail;
+  };
+  const why = group("Neden bu ajan?");
+  const reason = document.createElement("p");
+  const routes = {
+    mention: "İstekteki @etiket ile çağrıldı.",
+    reply: "Yanıtlanan mesajın göndereni olduğu için çağrıldı.",
+    team: "Ekip görüşü isteğiyle çağrıldı.",
+    synthesis: `${routing.router}, aynı isteğe verilen ekip yanıtlarını özetlemek için çağrıldı.`,
+    routing: routing.branch_fallback ? "Panel bu ajanı açıkça istenen dalın yanıt vermesi için ekledi."
+      : `${routing.router}${routing.supervisor ? " (Supervisor / Orchestrator)" : ""} etiketsiz isteği bu ajana yönlendirdi.`,
+  };
+  const role = message.agent_profile?.role_label;
+  reason.textContent = [routes[routing.mode], message.agent_profile?.branch_label, role,
+    routing.total > 1 ? `Yanıt sırası ${routing.position}/${routing.total}.` : "",
+    routing.ordered ? "İstekte belirtilen dal sırası uygulandı." : "",
+    routing.scoped ? "Yönlendirme istekte belirtilen dallarla sınırlandı." : ""].filter(Boolean).join(" · ");
+  why.append(reason);
+  const records = group("Hangi kayıtları gördü?");
+  const note = document.createElement("p");
+  note.className = "hint";
+  note.textContent = "Yanıt hazırlanırken ajana iletilen kaynaklar.";
+  records.append(note);
+  const lists = [
+    ["Proje kararları", sources.decisions.map(item => boardSourceLink(item.topic, item.id,
+      `${item.active ? "Güncel" : "Değiştirildi"} · ${item.text.slice(0, 250)}`))],
+    ["Kabul kriterleri", (sources.criteria || []).map(item => {
+      const link = document.createElement("a");
+      link.href = "#history";
+      link.textContent = `${item.status} · ${item.title}${item.report_available ? " · " + item.report_run + "/" + item.report : ""}`;
+      link.addEventListener("click", () => {
+        const picker = byId("history-run");
+        picker.value = item.task_run;
+        loadHistory(topic.project, item.task_run);
+      });
+      return link;
+    })],
+    ["Test ve denetim raporları", sources.reports.map(item => {
+      const link = document.createElement("a");
+      link.href = topic.project ? historyUrl(topic.project, item.run, item.path)
+        : `/api/board-memory/${topic.id}/${item.run}/${item.path}`;
+      const label = item.path.endsWith("05-integration.txt") ? "Entegrasyon test raporu"
+        : item.path.endsWith("05-check.txt") ? "Test raporu" : "Denetim raporu";
+      link.textContent = `${label} · ${item.run}/${item.path}`;
+      return link;
+    })],
+    ["Pano mesajları", sources.messages.map(item => boardSourceLink(item.topic, item.id,
+      `${item.author} · ${item.excerpt}`))],
+    ["Ekler", sources.attachments.map(item => {
+      const link = document.createElement("a");
+      link.href = `/api/board-attachment/${topic.id}/${item.id}`;
+      link.textContent = item.name;
+      return link;
+    })],
+  ];
+  for (const [name, links] of lists) {
+    if (!links.length) continue;
+    const title = document.createElement("h4");
+    title.textContent = name;
+    const list = document.createElement("ul");
+    for (const link of links) {
+      const item = document.createElement("li");
+      item.append(link);
+      list.append(item);
+    }
+    records.append(title, list);
+  }
+  return fragment;
+}
+
 function renderMessages(topic, decisions = projectDecisions) {
   displayedTopic = topic;
   const messages = topic?.messages || [];
@@ -135,6 +230,7 @@ function renderMessages(topic, decisions = projectDecisions) {
     const text = document.createElement("p");
     appendMessageText(text, message.text);
     article.append(text);
+    if (message.trace?.sources) article.append(renderAgentTrace(message, topic));
     if (message.proposal) {
       const approved = approvals.get(message.id);
       const detail = document.createElement("details");
@@ -341,6 +437,7 @@ async function refreshBoard(includeList = false) {
       preparedMemoryProject = data.topic.project;
       byId("repo").value = data.topic.project;
       loadProjectTeam(data.topic.project);
+      loadHistory(data.topic.project);
       boardNeedsList = true;
     }
     const memoryProject = data.topic?.project || (topicId ? "" : preparedMemoryProject);
@@ -453,6 +550,7 @@ async function openWorkspaceProject(path, action = "open_project") {
   preparedMemoryProject = data.project;
   if ((data.id || "") !== topicId) selectTopic(data.id || "");
   await loadProjectTeam(data.project);
+  loadHistory(data.project);
   const status = byId("project-status");
   status.hidden = false;
   status.classList.remove("error");

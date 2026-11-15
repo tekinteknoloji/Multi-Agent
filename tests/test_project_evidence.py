@@ -47,6 +47,9 @@ class ProjectEvidenceTests(unittest.TestCase):
             topic, _ = board.post(None, "Kullanıcı", "Oturum kapanış uyarısı testi", project=project)
             _, first = board.post(topic, "Mimar", "İlk öneri", agent_id="plan", proposal="Uyarı 5 dakika önce")
             old = board.approve_decision(topic, first)
+            _, expiry_proposal = board.post(topic, "Mimar", "Zaman aşımı önerisi", agent_id="plan",
+                                            proposal="Oturum 30 dakikada zaman aşımına uğrar.")
+            expiry = board.approve_decision(topic, expiry_proposal)
             _, last = board.post(topic, "Mimar", "Yeni öneri", agent_id="plan", proposal="Uyarı 3 dakika önce")
             new = board.approve_decision(topic, last, old)
             run = "111111111111"
@@ -64,6 +67,9 @@ class ProjectEvidenceTests(unittest.TestCase):
                 context = providers.project_context(copied, "Oturum uyarı testi", structured=True)
             decisions = {item["id"]: item for item in context["decision_records"]}
             self.assertFalse(decisions[old]["active"])
+            self.assertTrue(decisions[new]["active"])
+            self.assertTrue(decisions[expiry]["active"])
+            self.assertIsNone(decisions[expiry]["replaces"])
             self.assertEqual(decisions[new]["replaces"], old)
             self.assertEqual(decisions[new]["kind"], "approved_decision")
             report, = context["test_evidence"]

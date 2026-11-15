@@ -156,10 +156,11 @@ def project_context(project, query="", agent_id=None, topic_id=None, *, structur
             history.append((relevance, previous, successor))
     if history:
         current.append("İlgili onaylı karar geçmişi (değiştirilen kararlar artık geçerli değil):")
-        for _, old, new in sorted(history, key=lambda item: (item[0], item[2]["time"]), reverse=True)[:3]:
-            status = "Güncel" if new["active"] else "Sonradan değiştirildi"
-            current.append(f"- Değiştirildi: {decision_source(old)} {old['text'][:550]}\n"
-                           f"  Yerine geçen karar ({status}): {decision_source(new)} {new['text'][:550]}")
+    history = sorted(history, key=lambda item: (item[0], item[2]["time"]), reverse=True)[:3]
+    for _, old, new in history:
+        status = "Güncel" if new["active"] else "Sonradan değiştirildi"
+        current.append(f"- Değiştirildi: {decision_source(old)} {old['text'][:550]}\n"
+                       f"  Yerine geçen karar ({status}): {decision_source(new)} {new['text'][:550]}")
 
     messages, reports = [], []
     for topic in topics:
@@ -169,7 +170,7 @@ def project_context(project, query="", agent_id=None, topic_id=None, *, structur
                 relevance = score(item["text"])
                 if relevance and not item.get("decision"):
                     messages.append((relevance, item.get("agent_id") == agent_id, item["time"],
-                                     f"[{topic['id']}/{item['id']}] {title} · {item['author']}: {item['text'][:450]}"))
+                                     topic["id"], item["id"], title, item["author"], item["text"][:450]))
         entries = discussion.reports(topic, None)
         run_text = {}
         for item in topic["messages"]:
@@ -177,7 +178,7 @@ def project_context(project, query="", agent_id=None, topic_id=None, *, structur
                 run_text.setdefault(item["run_id"], []).append(item["text"])
         for entry in entries:
             name = entry["path"]
-            if not name.endswith(("05-check.txt", "06-review.json", ".review.md")):
+            if not name.endswith(("05-check.txt", "05-integration.txt", "06-review.json", ".review.md")):
                 continue
             run = entry["run"]
             relevance = score(title + " " + " ".join(run_text.get(run, [])))
@@ -187,19 +188,21 @@ def project_context(project, query="", agent_id=None, topic_id=None, *, structur
                             relevance, topic["messages"][-1]["time"], name, run, topic["project"]))
 
     current.append("İlgili eski konuşmalar (görüş ve öneriler):")
-    current.extend("- " + item[-1] for item in sorted(messages, reverse=True)[:3])
+    selected_messages = sorted(messages, reverse=True)[:3]
+    for _, _, _, topic, message, title, author, excerpt in selected_messages:
+        current.append(f"- [{topic}/{message}] {title} · {author}: {excerpt}")
     current.append("İlgili test ve denetim raporları (kanıt kapsamı alıntıda açıkça belirtilen davranışlarla sınırlıdır):")
     ranked = sorted(set(reports), reverse=True)
     test_records = []
     emitted = set()
     for _, _, _, _, name, run, owner in ranked if structured else []:
-        if not name.endswith("05-check.txt") or (run, name) in emitted:
+        if not name.endswith(("05-check.txt", "05-integration.txt")) or (run, name) in emitted:
             continue
         folder = discussion.report_root({"project": owner}, None)
         try:
             path = discussion.memory_path(folder, run, name)
             output = path.read_text(encoding="utf-8", errors="replace")
-            sidecar = path.with_name("05-check-evidence.json")
+            sidecar = path.with_name(path.stem + "-evidence.json")
             record = evidence.test_record(output)
             record["recorded_at"] = None
             if sidecar.is_file() and not sidecar.is_symlink():
@@ -212,6 +215,7 @@ def project_context(project, query="", agent_id=None, topic_id=None, *, structur
         test_records.append({**record, "id": f"{run}/{name}", "run": run, "path": name, "excerpt": output[:550]})
         if len(test_records) == 4:
             break
+    report_sources = []
     for _, _, _, _, name, run, owner in ranked[:4]:
         folder = discussion.report_root({"project": owner}, None)
         try:
@@ -219,10 +223,20 @@ def project_context(project, query="", agent_id=None, topic_id=None, *, structur
         except OSError:
             continue
         current.append(f"- [{run}/{name}] {excerpt}")
+        report_sources.append({"run": run, "path": name})
     summary = "\n".join(current)
     if structured:
+        import job_history
+        selected_decisions = {item["id"]: item for item in decisions[:6]}
+        for _, old, new in history:
+            selected_decisions.update({old["id"]: old, new["id"]: new})
         return {"project_memory": summary, "test_evidence": test_records,
-                "decision_records": decisions[:6] + [old for _, old, _ in history[:3]]}
+                "decision_records": list(selected_decisions.values()),
+                "criterion_records": job_history.relevant_criteria(Path(project), topics, query),
+                "context_sources": {"reports": report_sources, "messages": [
+                    {"topic": topic, "id": message, "author": author, "excerpt": excerpt}
+                    for _, _, _, topic, message, _, author, excerpt in selected_messages
+                ]}}
     return summary
 
 

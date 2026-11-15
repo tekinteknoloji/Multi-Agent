@@ -14,7 +14,7 @@
     <h1>Proje çalışma alanı</h1>
     <nav class="workspace-links" aria-label="Sayfa bölümleri">
       <a href="#project">Proje ve ekip</a><a href="#board-view">Pano</a>
-      <a href="#task-section">Görev ve sonuç</a><a href="#live">Canlı ajan akışı</a>
+      <a href="#task-section">Görev ve sonuç</a><a href="#history">Görev geçmişi</a><a href="#live">Canlı ajan akışı</a>
     </nav>
     <section id="project" class="card workspace-section" aria-labelledby="project-title">
       <h2 id="project-title">Proje ve ekip</h2>
@@ -89,6 +89,15 @@
               <div id="board-report-list"></div>
             </details>
           </section>
+    <section id="history" class="card workspace-section" aria-labelledby="history-title">
+      <h2 id="history-title">Görev geçmişi</h2>
+      <p id="history-status" class="hint" role="status">Geçmişi görmek için bir proje aç.</p>
+      <div id="history-picker" hidden>
+        <label for="history-run">Kayıtlı görev</label>
+        <select id="history-run"></select>
+      </div>
+      <div id="history-detail"></div>
+    </section>
     <section id="task-section" class="workspace-section" aria-labelledby="task-section-title">
       <h2 id="task-section-title">Görev ve sonuç</h2>
     <ol class="steps" aria-label="İş akışı">
@@ -105,6 +114,8 @@
             <summary>Test ayarları</summary>
             <label for="check">Test komutu <span class="muted">(isteğe bağlı)</span></label>
             <textarea id="check" name="check" rows="4" maxlength="4096" spellcheck="false" aria-describedby="check-help" placeholder="python&#10;-B&#10;-m&#10;unittest"></textarea>
+            <label for="integration">Birleşik entegrasyon testi <span class="muted">(isteğe bağlı)</span></label>
+            <textarea id="integration" name="integration" rows="4" maxlength="4096" spellcheck="false" aria-describedby="check-help" placeholder="python&#10;-m&#10;unittest&#10;tests.test_integration"></textarea>
             <p id="check-help" class="hint">Programı ilk satıra, her argümanı ayrı satıra yaz.</p>
           </details>
           <div class="actions">
@@ -119,6 +130,10 @@
       <section class="card result" aria-labelledby="result-title">
         <div class="result-head"><h2 id="result-title">Çalışma sonucu</h2><span id="status" class="status">Bekliyor</span></div>
         <p id="progress" class="progress" role="status">Bir görev başlattığında ilerleme burada görünür.</p>
+        <section id="finding-review" aria-labelledby="finding-title" hidden>
+          <h3 id="finding-title">Denetim bulgularını incele</h3>
+          <div id="finding-items"></div>
+        </section>
         <section id="plan-editor" aria-labelledby="plan-editor-title" hidden>
           <h3 id="plan-editor-title">Uygulama planını düzenle</h3>
           <details id="plan-review-box" hidden>
