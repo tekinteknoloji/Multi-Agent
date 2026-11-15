@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi-Agent</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+  <script src="/board.js" defer></script>
+</head>
+<body>
+  <header class="top"><div class="wrap brand"><span class="logo" aria-hidden="true">M</span> Multi-Agent <label class="theme-control" for="theme">Tema <select id="theme"><option value="system">Sistem</option><option value="light">Açık</option><option value="dark">Koyu</option></select></label></div></header>
+  <main class="wrap">
+    <h1>Proje çalışma alanı</h1>
+    <nav class="workspace-links" aria-label="Sayfa bölümleri">
+      <a href="#project">Proje ve ekip</a><a href="#board-view">Pano</a>
+      <a href="#task-section">Görev ve sonuç</a><a href="#live">Canlı ajan akışı</a>
+    </nav>
+    <section id="project" class="card workspace-section" aria-labelledby="project-title">
+      <h2 id="project-title">Proje ve ekip</h2>
+      <label for="repo">Proje klasörü</label>
+      <input id="repo" name="repo" form="job-form" required placeholder="D:\Projeler\Ornek" spellcheck="false" maxlength="2048">
+      <div class="actions">
+        <button id="board-open-project" type="button">Projeyi aç</button>
+        <button id="prepare-project" type="button" class="secondary">Boş proje hazırla</button>
+        <button id="board-bind" type="button" class="secondary">Panoyu projeye bağla</button>
+      </div>
+      <p id="project-status" class="hint" role="status" hidden></p>
+      <p id="board-storage" class="hint" role="status"></p>
+      <section class="extra-agents" aria-label="Ekip">
+            <div class="result-head"><strong>Ekip</strong>
+              <button id="add-project-member" type="button" class="secondary">+ Ajan ekle</button>
+            </div>
+            <p id="project-team-status" class="hint"></p>
+            <div class="actions">
+              <button id="open-project-team" type="button" class="secondary">Proje ekibini aç</button>
+              <button id="open-default-team" type="button" class="secondary">Genel ekibi aç</button>
+            </div>
+            <div id="project-team-list"></div>
+          </section>
+    </section>
+    <section id="board-view" class="card workspace-section" aria-labelledby="board-title">
+      <h2 id="board-title">Proje panosu</h2>
+          <div class="board-top">
+            <div><label for="board-topic">Pano konusu</label><select id="board-topic"><option value="">Yeni konu</option></select></div>
+            <button id="board-new" type="button" class="secondary">Yeni konu</button>
+          </div>
+          <label for="board-search">Sohbette ara</label>
+          <input id="board-search" type="search" placeholder="Mesaj veya ajan adı">
+          <div id="board-messages" class="board-messages" aria-label="Pano mesajları" tabindex="0"></div>
+          <form id="board-form">
+            <div id="board-reply" class="board-quote" hidden>
+              <div><strong id="board-reply-author"></strong><p id="board-reply-text"></p></div>
+              <button id="board-cancel-reply" type="button" class="secondary">Yanıtı kaldır</button>
+            </div>
+            <label for="board-message">Fikir veya not</label>
+            <textarea id="board-message" rows="4" maxlength="8000" placeholder="Örneğin: Basit bir hesap makinesi yapalım."></textarea>
+            <label for="board-attachments">Ek dosyalar <span class="muted">(en fazla 4 dosya, toplam 2 MB)</span></label>
+            <input id="board-attachments" type="file" multiple>
+            <label for="board-mention">Ajan etiketle</label>
+            <select id="board-mention">
+              <option value="">@ ile birini etiketle…</option>
+            </select>
+            <div class="actions">
+              <button type="submit" value="directed">Yaz ve ajanlara ilet</button>
+              <button type="submit" value="post" class="secondary">Panoya yaz</button>
+            </div>
+          </form>
+          <div class="actions">
+            <button id="board-directed" type="button" class="secondary">Son mesajı ilet</button>
+            <button id="board-team" type="button" class="secondary" hidden>Ekibin tamamına sor</button>
+            <button id="board-synthesis" type="button" class="secondary">Ekibi özetle</button>
+          </div>
+          <p id="board-status" class="hint" role="status"></p>
+          <p id="board-error" class="error" role="alert" hidden></p>
+          <p class="hint">Harici bir ajandan görüş istenirken ilgili pano bağlamı sağlayıcısına gönderilir.</p>
+      <p id="board-models" class="hint"></p>
+    </section>
+          <section id="board-memory" class="card workspace-section" aria-labelledby="board-memory-title" hidden>
+            <div class="result-head"><h2 id="board-memory-title">Proje hafızası</h2>
+              <a id="board-export" class="download" download>Hafızayı indir</a>
+            </div>
+            <details id="board-decisions" open>
+              <summary>Proje kararları</summary>
+              <ul id="board-decision-list"></ul>
+            </details>
+            <details id="board-reports">
+              <summary>Çalışma raporları</summary>
+              <div id="board-report-list"></div>
+            </details>
+          </section>
+    <section id="task-section" class="workspace-section" aria-labelledby="task-section-title">
+      <h2 id="task-section-title">Görev ve sonuç</h2>
+    <ol class="steps" aria-label="İş akışı">
+      <li id="step-plan" data-agent="plan"><span class="number">01</span><div><strong>Planlama</strong><small id="planner-name">Atama yok</small></div></li>
+      <li id="step-code" data-agent="code"><span class="number">02</span><div><strong>Geliştirme</strong><small>Atama yok</small></div></li>
+      <li id="step-review" data-agent="review"><span class="number">03</span><div><strong>Denetim</strong><small id="reviewer-name">Atama yok</small></div></li>
+    </ol>
+      <div class="grid">
+        <section class="card" aria-label="Görev taslağı">
+          <form id="job-form">
+          <label for="task">Görev açıklaması</label>
+          <textarea id="task" name="task" required rows="6" maxlength="16000" placeholder="Yapılacak değişikliği ve beklediğin sonucu yaz."></textarea>
+          <details>
+            <summary>Test ayarları</summary>
+            <label for="check">Test komutu <span class="muted">(isteğe bağlı)</span></label>
+            <textarea id="check" name="check" rows="4" maxlength="4096" spellcheck="false" aria-describedby="check-help" placeholder="python&#10;-B&#10;-m&#10;unittest"></textarea>
+            <p id="check-help" class="hint">Programı ilk satıra, her argümanı ayrı satıra yaz.</p>
+          </details>
+          <div class="actions">
+            <button type="submit" value="plan" class="secondary">Plan oluştur</button>
+            <button type="submit" value="execute">Tüm akışı başlat</button>
+            <button type="submit" value="direct" class="secondary">Doğrudan geliştir</button>
+          </div>
+          <p id="form-error" class="error" role="alert" hidden></p>
+          <p class="hint">Seçilen harici sağlayıcılar görev ve ilgili proje bağlamını işleyebilir.</p>
+          </form>
+        </section>
+      <section class="card result" aria-labelledby="result-title">
+        <div class="result-head"><h2 id="result-title">Çalışma sonucu</h2><span id="status" class="status">Bekliyor</span></div>
+        <p id="progress" class="progress" role="status">Bir görev başlattığında ilerleme burada görünür.</p>
+        <section id="plan-editor" aria-labelledby="plan-editor-title" hidden>
+          <h3 id="plan-editor-title">Uygulama planını düzenle</h3>
+          <details id="plan-review-box" hidden>
+            <summary>Son plan denetimi</summary>
+            <pre id="plan-review-text"></pre>
+          </details>
+          <label for="plan-text">Gönderilecek plan</label>
+          <textarea id="plan-text" rows="11" maxlength="24000" spellcheck="false"></textarea>
+          <div class="actions">
+            <button id="review-plan" type="button" class="secondary">Denetçiye gönder</button>
+            <button id="execute-plan" type="button">Codex’e gönder</button>
+          </div>
+          <p class="hint">Denetim bulguları mimara gider. Mimarın planını düzenleyebilir veya doğrudan Codex’e gönderebilirsin.</p>
+          <p id="plan-error" class="error" role="alert" hidden></p>
+        </section>
+        <div id="outputs" hidden>
+          <div id="output-nav" class="output-nav" aria-label="Çıktılar"></div>
+          <pre id="content" tabindex="0"></pre>
+          <a id="download" class="download" download>Dosyayı indir</a>
+        </div>
+        <p id="folder" class="hint folder" hidden></p>
+        <div class="actions" id="apply-actions" hidden>
+          <button id="open-apply" type="button">İncele ve uygula</button>
+        </div>
+        <div id="last-application" class="folder" hidden>
+          <strong>Son kaynak proje uygulaması</strong>
+          <p id="application-target" class="hint"></p>
+          <div class="actions">
+            <button id="open-revert" type="button" class="secondary">Geri al</button>
+            <button id="open-reapply" type="button" class="secondary" hidden>Yeniden uygula</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    </section>
+    <section id="live" class="live" aria-labelledby="live-title">
+      <div class="result-head">
+        <h2 id="live-title">Canlı ajan akışı</h2>
+        <span id="live-stage" class="status">Görev bekleniyor</span>
+      </div>
+      <div id="agent-cards" class="agent-cards"></div>
+      <section class="card timeline" aria-labelledby="timeline-title">
+        <h3 id="timeline-title">Zaman çizelgesi</h3>
+        <ol id="timeline"><li>Görev başlayınca aşamalar burada görünür.</li></ol>
+      </section>
+    </section>
+    <dialog id="apply-dialog" aria-labelledby="apply-title">
+      <h2 id="apply-title">Kaynak projeye uygula</h2>
+      <p>Bu Git farkı aşağıdaki projenin çalışma dosyalarına yazılacak.</p>
+      <p id="apply-target" class="hint folder"></p>
+      <pre id="apply-preview" tabindex="0" aria-label="Uygulanacak Git farkı"></pre>
+      <p id="apply-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button id="cancel-apply" type="button" class="secondary">Vazgeç</button>
+        <button id="confirm-apply" type="button" disabled>Onayla ve uygula</button>
+      </div>
+    </dialog>
+    <dialog id="agent-dialog" aria-labelledby="agent-title">
+      <h2 id="agent-title">Ek ajan</h2>
+      <label for="agent-name">Ajan adı</label>
+      <input id="agent-name" maxlength="64" placeholder="Örn. İnceleyici">
+      <div id="project-agent-fields" hidden>
+        <label for="agent-handle">@etiket</label><input id="agent-handle" maxlength="64" placeholder="mimar">
+        <label for="agent-provider">Sağlayıcı</label>
+        <select id="agent-provider">
+          <option value="ollama">Ollama · yerel</option><option value="codex">Codex CLI</option>
+          <option value="claude">Claude Code CLI</option><option value="openai">OpenAI uyumlu API</option>
+          <option value="anthropic">Anthropic API</option>
+        </select>
+        <label for="agent-branch">Akıştaki görevi</label>
+        <select id="agent-branch"></select>
+        <label for="agent-template-role">Hazır rol tanımı</label>
+        <select id="agent-template-role"></select>
+        <label for="agent-slot">Otomatik akış ataması</label>
+        <select id="agent-slot">
+          <option value="member">Ekip üyesi</option><option value="plan">Planlama</option>
+          <option value="code">Geliştirme</option><option value="review">Denetim</option>
+        </select>
+        <p class="hint">Her otomatik adımı bir etkin ajan üstlenir. Diğer ajanlara panoda görev verebilirsin.</p>
+        <div id="agent-api-fields" hidden>
+          <label for="agent-api-url">API taban adresi</label><input id="agent-api-url" placeholder="https://api.openai.com/v1">
+          <label for="agent-key-env">API anahtarının ortam değişkeni adı</label><input id="agent-key-env" placeholder="OPENAI_API_KEY">
+          <p class="hint">Kaydettiğinde bu API adresinin bu bilgisayarda kullanılmasına izin verirsin.</p>
+        </div>
+        <div id="agent-model-id-row" hidden>
+          <label for="agent-model-id">Model kimliği</label><input id="agent-model-id" maxlength="160" placeholder="CLI için boş bırakılabilir">
+        </div>
+      </div>
+      <div id="agent-ollama-row"><label for="agent-model">Yerel model</label>
+      <select id="agent-model"></select>
+      <div class="model-tools"><p id="models-status" class="hint" role="status"></p>
+        <button id="refresh-models" type="button" class="secondary">Model listesini yenile</button></div></div>
+      <label for="agent-duty">Görevi</label>
+      <textarea id="agent-duty" rows="5" maxlength="6000" placeholder="Hangi durumları incelemesi ve ne zaman görüş bildirmesi gerekiyor?"></textarea>
+      <label class="agent-option"><input id="agent-watch" type="checkbox"> Kod turlarında Git farkını ve test kanıtını izle</label>
+      <label class="agent-option"><input id="agent-enabled" type="checkbox" checked> Ekipte etkin</label>
+      <p id="agent-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button id="remove-project-agent" type="button" class="secondary" hidden>Ekipten çıkar</button>
+        <button id="cancel-agent" type="button" class="secondary">Vazgeç</button>
+        <button id="save-agent" type="button">Ajanı kaydet</button>
+      </div>
+    </dialog>
+    <dialog id="revert-dialog" aria-labelledby="revert-title">
+      <h2 id="revert-title">Son değişikliği geri al</h2>
+      <p id="revert-description">Panelin uyguladığı Git farkı kaynak projede tersine çevrilecek.</p>
+      <p id="revert-target" class="hint folder"></p>
+      <p id="revert-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button id="cancel-revert" type="button" class="secondary">Vazgeç</button>
+        <button id="confirm-revert" type="button">Onayla ve geri al</button>
+      </div>
+    </dialog>
+    <template id="agent-template">
+      <article class="card agent">
+        <div class="result-head"><div><h3 data-label="name"></h3><small class="hint" data-label="model" hidden></small></div><span class="status" data-label="state">Bekliyor</span></div>
+        <p class="agent-activity" data-label="activity">Görev bekleniyor.</p>
+        <div class="agent-decision"><strong>Son karar</strong><p data-label="decision">Henüz karar yok.</p></div>
+        <p class="output-label">Canlı çıktı</p>
+        <pre data-label="output" tabindex="0">Henüz çıktı yok.</pre>
+      </article>
+    </template>
+  </main>
+</body>
+</html>

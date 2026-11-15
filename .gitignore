@@ -1,0 +1,7 @@
+runs/
+Proje-Hafizasi/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
