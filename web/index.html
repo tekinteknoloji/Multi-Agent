@@ -22,6 +22,8 @@
       <input id="repo" name="repo" form="job-form" required placeholder="D:\Projeler\Ornek" spellcheck="false" maxlength="2048">
       <div class="actions">
         <button id="board-open-project" type="button">Projeyi aç</button>
+        <button id="browse-project" type="button" class="secondary">Klasör seç</button>
+        <button id="new-project-folder" type="button" class="secondary">Yeni proje klasörü</button>
         <button id="prepare-project" type="button" class="secondary">Boş proje hazırla</button>
         <button id="board-bind" type="button" class="secondary">Panoyu projeye bağla</button>
       </div>
@@ -42,9 +44,10 @@
     <section id="board-view" class="card workspace-section" aria-labelledby="board-title">
       <h2 id="board-title">Proje panosu</h2>
           <div class="board-top">
-            <div><label for="board-topic">Pano konusu</label><select id="board-topic"><option value="">Yeni konu</option></select></div>
+            <div><label for="board-topic">Pano konusu</label><select id="board-topic" disabled><option value="">Önce proje aç</option></select></div>
             <button id="board-new" type="button" class="secondary">Yeni konu</button>
           </div>
+          <div class="actions"><button id="board-draft-task" type="button" class="secondary" disabled>Konuşmadan görev oluştur</button></div>
           <label for="board-search">Sohbette ara</label>
           <input id="board-search" type="search" placeholder="Mesaj veya ajan adı">
           <div id="board-messages" class="board-messages" aria-label="Pano mesajları" tabindex="0"></div>
@@ -53,24 +56,28 @@
               <div><strong id="board-reply-author"></strong><p id="board-reply-text"></p></div>
               <button id="board-cancel-reply" type="button" class="secondary">Yanıtı kaldır</button>
             </div>
-            <label for="board-message">Fikir veya not</label>
-            <textarea id="board-message" rows="4" maxlength="8000" placeholder="Örneğin: Basit bir hesap makinesi yapalım."></textarea>
-            <label for="board-attachments">Ek dosyalar <span class="muted">(en fazla 4 dosya, toplam 2 MB)</span></label>
-            <input id="board-attachments" type="file" multiple>
-            <label for="board-mention">Ajan etiketle</label>
-            <select id="board-mention">
-              <option value="">@ ile birini etiketle…</option>
-            </select>
-            <div class="actions">
-              <button type="submit" value="directed">Yaz ve ajanlara ilet</button>
-              <button type="submit" value="post" class="secondary">Panoya yaz</button>
+            <div id="board-pending-attachments" class="board-pending-attachments" hidden>
+              <span id="board-attachment-names" role="status"></span>
+              <button id="board-clear-attachments" type="button" class="secondary">Ekleri kaldır</button>
+            </div>
+            <div class="board-composer">
+              <input id="board-attachments" type="file" multiple hidden>
+              <button id="board-add-attachment" type="button" class="secondary" aria-label="Dosya ekle" title="Dosya ekle · en fazla 4 dosya, toplam 2 MB">📎</button>
+              <button id="board-mention" type="button" class="secondary" aria-label="Ajan etiketle" aria-expanded="false" aria-controls="board-mention-options" title="Ajan etiketle">@</button>
+              <textarea id="board-message" rows="1" maxlength="8000" aria-label="Mesaj" placeholder="Mesaj yaz"></textarea>
+              <button id="board-send" type="submit" value="directed" title="Gönder · Enter">Gönder</button>
+              <div id="board-mention-options" class="board-mention-options" role="group" aria-label="Etiketlenecek ajanlar" hidden></div>
             </div>
           </form>
-          <div class="actions">
-            <button id="board-directed" type="button" class="secondary">Son mesajı ilet</button>
-            <button id="board-team" type="button" class="secondary" hidden>Ekibin tamamına sor</button>
-            <button id="board-synthesis" type="button" class="secondary">Ekibi özetle</button>
-          </div>
+          <details id="board-more">
+            <summary>Diğer işlemler</summary>
+            <div class="actions">
+              <button type="submit" form="board-form" value="post" class="secondary">Sadece panoya yaz</button>
+              <button id="board-directed" type="button" class="secondary">Son mesajı ilet</button>
+              <button id="board-team" type="button" class="secondary" hidden>Ekibin tamamına sor</button>
+              <button id="board-synthesis" type="button" class="secondary">Ekibi özetle</button>
+            </div>
+          </details>
           <p id="board-status" class="hint" role="status"></p>
           <p id="board-error" class="error" role="alert" hidden></p>
           <p class="hint">Harici bir ajandan görüş istenirken ilgili pano bağlamı sağlayıcısına gönderilir.</p>
@@ -110,6 +117,7 @@
           <form id="job-form">
           <label for="task">Görev açıklaması</label>
           <textarea id="task" name="task" required rows="6" maxlength="16000" placeholder="Yapılacak değişikliği ve beklediğin sonucu yaz."></textarea>
+          <p id="task-draft-source" class="hint" hidden><a href="#board-view">Kaynak pano konusu</a> · Taslağı düzenleyip görevi başlatabilirsin.</p>
           <details>
             <summary>Test ayarları</summary>
             <label for="check">Test komutu <span class="muted">(isteğe bağlı)</span></label>

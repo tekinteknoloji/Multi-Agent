@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import sys
@@ -15,6 +16,19 @@ import web_app
 
 
 class JobRecoveryTests(unittest.TestCase):
+    def test_native_picker_returns_selected_folder_or_cancellation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            selected = root / "Yeni Proje"
+            selected.mkdir()
+            with patch.object(team, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(str(selected)))) as run:
+                self.assertEqual(web_app.pick_project_folder({"repo": str(root), "create": True}), str(selected))
+                self.assertIn("Yeni Klasör", run.call_args.args[0][-1])
+            with patch.object(team, "run", return_value=subprocess.CompletedProcess([], 0, '""')):
+                self.assertIsNone(web_app.pick_project_folder({"repo": str(root)}))
+            repo = Path(web_app.prepare_project({"repo": str(selected)}))
+            self.assertEqual(team.git(repo, "log", "-1", "--format=%s").strip(), "Initial commit")
+
     def test_reapply_recovery_preserves_event_and_does_not_repeat_git_apply(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

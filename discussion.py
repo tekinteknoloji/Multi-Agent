@@ -68,6 +68,14 @@ class Discussions:
     def __init__(self, root):
         self.root = root
         self.lock = threading.RLock()
+        for path in root.glob("*.json"):
+            try:
+                entry = json.loads(path.read_text(encoding="utf-8"))
+                if (isinstance(entry, dict) and entry.get("id") == path.stem and entry.get("project")
+                        and "title" in entry and "messages" not in entry):
+                    self.index_topic(entry)
+            except (OSError, ValueError):
+                continue
 
     def read(self, topic_id):
         if not isinstance(topic_id, str) or not re.fullmatch(r"[a-f0-9]{12}", topic_id):
@@ -89,14 +97,9 @@ class Discussions:
             except FileNotFoundError as error:
                 raise ValueError("Pano konusu bulunamadı.") from error
 
-    def list(self):
+    def list(self, project=None):
         with self.lock:
-            topics = []
-            for path in self.root.glob("*.json"):
-                try:
-                    topics.append(self.read(path.stem))
-                except (ValueError, OSError):
-                    continue
+            topics = project_topics(project) if project else []
             return [{"id": topic["id"], "title": topic["title"], "project": topic.get("project")} for topic in
                     sorted(topics, key=lambda item: item["messages"][-1]["time"], reverse=True)]
 
@@ -139,7 +142,7 @@ class Discussions:
 
     def index_topic(self, topic):
         write_json(self.root / f"{topic['id']}.json",
-                   {"id": topic["id"], "title": topic["title"], "project": topic["project"]})
+                   {"id": topic["id"], "project": topic["project"]})
 
     def write_index(self, memory):
         lines = ["# Proje hafızası", "", "Konular ilk fikirleri, kararları, mesajları, ekleri ve çalışma raporlarını içerir.", ""]
@@ -163,6 +166,13 @@ class Discussions:
         atomic_text(target.with_suffix(".md"), memory_markdown(topic, team.ROOT / "runs", prefix="../"))
         self.index_topic(topic)
         self.write_index(memory)
+
+    def record_delivery(self, topic_id, request_id, delivery):
+        with self.lock:
+            topic = self.read(topic_id)
+            message = next(item for item in topic["messages"] if item["id"] == request_id)
+            message["delivery"] = delivery
+            self.write_topic(topic)
 
     def copy_reports(self, topic):
         if not topic.get("project"):
@@ -199,7 +209,7 @@ class Discussions:
 
     def post(self, topic_id, author, text, *, model=None, reply_to=None, run_id=None, extras=None, agent_id=None,
              project=None, uploads=None, agent_profile=None, use_base=True, decision=None, proposal=None,
-             event_id=None, trace=None):
+             event_id=None, trace=None, delivery=None):
         with self.lock:
             if topic_id is None:
                 topic_id = uuid.uuid4().hex[:12]
@@ -209,6 +219,8 @@ class Discussions:
                     project_memory(project, create=True)
             else:
                 topic = self.read(topic_id)
+                if project and (not topic.get("project") or Path(topic["project"]).resolve() != project.resolve()):
+                    raise ValueError("Bu konu seçili projeye bağlı değil. Yeni konu aç veya panoyu projeye bağla.")
             if event_id:
                 existing = next((item for item in topic["messages"] if item.get("event_id") == event_id), None)
                 if existing:
@@ -224,6 +236,8 @@ class Discussions:
                 message["event_id"] = event_id
             if trace:
                 message["trace"] = trace
+            if delivery:
+                message["delivery"] = delivery
             if agent_id and proposal:
                 message["proposal"] = proposal
             if decision:

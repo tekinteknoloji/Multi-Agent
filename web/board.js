@@ -13,12 +13,14 @@ let preparedMemoryProject = "";
 let extraTeamKey = "";
 let boardConfigured = false;
 let boardRoster = [];
+let activeBoardTurn = null;
 let projectDecisions = [];
 let decisionKey = "";
 let decisionTarget = "";
 const boardDate = new Intl.DateTimeFormat("tr-TR", {dateStyle: "medium", timeZone: "Europe/Istanbul"});
 const boardTime = new Intl.DateTimeFormat("tr-TR", {timeStyle: "short", timeZone: "Europe/Istanbul"});
 const draftByTopic = new Map();
+const generatedDraftTopics = new Set();
 const boardField = byId("task");
 const boardStatus = byId("board-status");
 const boardError = byId("board-error");
@@ -28,9 +30,12 @@ function selectTopic(id) {
   topicId = id;
   byId("board-topic").value = id;
   boardField.value = draftByTopic.get(id) || "";
+  byId("task-draft-source").hidden = !generatedDraftTopics.has(id);
   lastMessageKey = "";
   byId("board-search").value = "";
   byId("board-attachments").value = "";
+  renderPendingAttachments();
+  closeMentionOptions();
   setReply(null);
   renderMessages(null);
   renderMemory(null, []);
@@ -59,14 +64,18 @@ function appendMessageText(node, text) {
 }
 
 function updateBoardControls() {
+  const projectOpen = Boolean(preparedMemoryProject);
   for (const id of ["board-team", "board-synthesis", "board-directed"]) {
     byId(id).disabled = !topicId || boardBusy || boardRequest || !boardConfigured || !boardRoster.length;
   }
-  byId("board-topic").disabled = boardRequest;
-  byId("board-new").disabled = boardRequest;
-  for (const button of byId("board-form").querySelectorAll("button")) {
-    button.disabled = boardRequest;
+  byId("board-topic").disabled = !projectOpen || boardRequest;
+  byId("board-new").disabled = !projectOpen || boardRequest;
+  byId("board-draft-task").disabled = !projectOpen || !taskTopicFor(byId("repo").value)
+    || boardBusy || boardRequest || !boardRoster.length;
+  for (const field of document.querySelectorAll("#board-form button, #board-form textarea, #board-form input, [form='board-form']")) {
+    field.disabled = !projectOpen || boardRequest;
   }
+  byId("board-mention").disabled ||= !boardRoster.length;
   byId("board-models").textContent = boardConfigured ? "Ekip: " + (boardRoster.map(agent => agent.name).join(" · ") || "Etkin ajan yok.")
     : "Ajanlara iletmek için Ekip ekranından model ve görev seç.";
 }
@@ -166,13 +175,66 @@ function renderAgentTrace(message, topic) {
   return fragment;
 }
 
+const deliveryLabels = {
+  queued: "Sırada", preparing: "Bağlam hazırlanıyor", responding: "Yanıt bekleniyor",
+  answered: "Yanıtladı", error: "Hata", interrupted: "Kesildi",
+};
+
+function renderDeliveries(topic) {
+  const messages = topic?.messages || [];
+  const historicalReplies = new Map();
+  for (const message of messages) {
+    if (message.agent_id && message.reply_to) {
+      const authors = historicalReplies.get(message.reply_to) || new Set();
+      authors.add(message.author);
+      historicalReplies.set(message.reply_to, authors);
+    }
+  }
+  for (const message of messages) {
+    const box = byId(`delivery-${message.id}`);
+    if (!box) continue;
+    const record = message.delivery;
+    const active = activeBoardTurn?.id === topic.id && activeBoardTurn?.message === message.id;
+    const interrupted = !active && ["routing", "running"].includes(record?.state);
+    const receiptKey = JSON.stringify([record, interrupted, [...(historicalReplies.get(message.id) || [])]]);
+    if (box.dataset.receipt === receiptKey) continue;
+    box.dataset.receipt = receiptKey;
+    const summary = document.createElement("span");
+    const labels = {
+      saved: "Panoya kaydedildi · Ajanlara iletilmedi",
+      routing: record?.router ? `${record.router} alıcıları belirliyor` : "Alıcılar belirleniyor",
+      running: "Ajan turu sürüyor",
+      finished: "Ajan turu tamamlandı",
+      blocked: record?.reason, error: record?.reason,
+    };
+    const oldReplies = [...(historicalReplies.get(message.id) || [])];
+    summary.textContent = interrupted ? "Ajan turu kesildi" : labels[record?.state]
+      || (oldReplies.length ? `Yanıtlayanlar: ${oldReplies.join(", ")}` : "Pano kaydı");
+    box.replaceChildren(summary);
+    for (const agent of record?.agents || []) {
+      const state = interrupted && ["queued", "preparing", "responding"].includes(agent.state)
+        ? "interrupted" : agent.state;
+      const pill = document.createElement(agent.response ? "a" : "span");
+      pill.className = "board-delivery-agent";
+      pill.dataset.state = state;
+      pill.textContent = `${agent.name} · ${deliveryLabels[state] || state}`;
+      if (agent.reason) pill.title = agent.reason;
+      if (agent.response) pill.href = `#message-${agent.response}`;
+      box.append(pill);
+    }
+  }
+}
+
 function renderMessages(topic, decisions = projectDecisions) {
   displayedTopic = topic;
   const messages = topic?.messages || [];
   const term = byId("board-search").value.trim().toLocaleLowerCase("tr");
   const key = (topic?.id || "") + "/" + (topic?.project || "") + "/" + (messages.at(-1)?.id || "") + "/" + term +
     "/" + decisions.map(decision => decision.id).join(",");
-  if (key === lastMessageKey) return;
+  if (key === lastMessageKey) {
+    renderDeliveries(topic);
+    return;
+  }
   lastMessageKey = key;
   const list = byId("board-messages");
   const filtered = messages.filter(message => !term ||
@@ -297,10 +359,18 @@ function renderMessages(topic, decisions = projectDecisions) {
       });
       actions.append(transfer);
     }
+    if (message.author === "Kullanıcı" && !message.run_id) {
+      const delivery = document.createElement("div");
+      delivery.className = "board-delivery";
+      delivery.id = `delivery-${message.id}`;
+      delivery.setAttribute("role", "status");
+      article.append(delivery);
+    }
     article.append(actions);
     elements.push(article);
   }
   list.replaceChildren(...elements);
+  renderDeliveries(topic);
   if (nearEnd) list.scrollTop = list.scrollHeight;
   if (decisionTarget) {
     byId(`message-${decisionTarget}`)?.scrollIntoView({block: "nearest"});
@@ -389,14 +459,7 @@ function renderExtraTeam(agents, configured) {
     [id, name, handle, slot, role, branch])]);
   if (key === extraTeamKey) return;
   extraTeamKey = key;
-  const select = byId("board-mention");
-  select.replaceChildren(new Option("@ ile birini etiketle…", ""));
-  if (agents.length) select.add(new Option("@Herkes", "@Herkes"));
-  for (const agent of agents) {
-    const option = new Option(`${agent.name} · @${agent.handle} · ${agent.branch_label}`, `@${agent.handle}`);
-    option.dataset.custom = "true";
-    select.add(option);
-  }
+  closeMentionOptions();
   byId("board-team").hidden = agents.length === 0;
   byId("board-synthesis").hidden = !agents.some(agent => agent.slot === "plan" || agent.role === "supervisor");
 }
@@ -406,7 +469,7 @@ function projectKey(path) {
 }
 
 function taskTopicFor(path) {
-  return topicId && (!displayedTopic?.project || projectKey(displayedTopic.project) === projectKey(path)) ? topicId : null;
+  return topicId && displayedTopic?.project && projectKey(displayedTopic.project) === projectKey(path) ? topicId : null;
 }
 
 async function refreshBoard(includeList = false) {
@@ -419,7 +482,7 @@ async function refreshBoard(includeList = false) {
   try {
     const query = new URLSearchParams();
     if (requestedTopic) query.set("topic", requestedTopic);
-    else if (preparedMemoryProject) query.set("repo", preparedMemoryProject);
+    if (preparedMemoryProject) query.set("repo", preparedMemoryProject);
     if (loadList) query.set("list", "1");
     const response = await fetch(`/api/board?${query}`);
     if (!response.ok) throw new Error("Pano okunamadı.");
@@ -427,12 +490,14 @@ async function refreshBoard(includeList = false) {
     if (data.topics) {
       const list = byId("board-topic");
       const selected = projectKey(preparedMemoryProject);
-      const topics = data.topics.filter(topic => !selected || !topic.project || projectKey(topic.project) === selected);
-      list.replaceChildren(new Option("Yeni konu", ""), ...topics.map(topic => new Option(topic.title, topic.id)));
+      const topics = data.topics.filter(topic => selected && projectKey(topic.project) === selected);
+      list.replaceChildren(new Option(selected ? "Yeni konu" : "Önce proje aç", ""),
+        ...topics.map(topic => new Option(topic.title, topic.id)));
       list.value = topicId;
     }
     if (requestedTopic !== topicId) return;
     boardBusy = data.busy;
+    activeBoardTurn = data.turn;
     if (data.topic?.project && !preparedMemoryProject && !byId("repo").value.trim()) {
       preparedMemoryProject = data.topic.project;
       byId("repo").value = data.topic.project;
@@ -443,7 +508,7 @@ async function refreshBoard(includeList = false) {
     const memoryProject = data.topic?.project || (topicId ? "" : preparedMemoryProject);
     byId("board-storage").textContent = memoryProject
       ? `Mesajlar, ekler ve raporlar: ${memoryProject}\\Proje-Hafizasi`
-      : (topicId ? "Bu konu yerel panoda kayıtlı. Proje klasörüne taşımak için panoyu projeye bağla." : "");
+      : "Pano konularını görmek ve mesaj yazmak için önce bir proje aç.";
     renderExtraTeam(data.extra_agents || [], Boolean(data.configured));
     projectDecisions = data.decisions || [];
     renderMessages(data.topic);
@@ -497,20 +562,115 @@ byId("board-topic").addEventListener("change", event => {
   selectTopic(event.target.value);
   refreshBoard();
 });
+byId("board-draft-task").addEventListener("click", () => {
+  const repo = byId("repo").value;
+  const source = taskTopicFor(repo);
+  if (!source) return;
+  const previous = boardField.value;
+  if (previous.trim() && !window.confirm("Görev alanındaki metni yeni taslakla değiştirmek istiyor musun?")) return;
+  boardOperation(async () => {
+    boardStatus.textContent = "Konuşmadan görev taslağı hazırlanıyor…";
+    const result = await sendBoard({action: "draft_task", id: source, repo});
+    if (taskTopicFor(byId("repo").value) !== result.id || boardField.value !== previous) {
+      throw new Error("Proje, konu veya görev metni değişti. Taslağı yeniden oluştur.");
+    }
+    generatedDraftTopics.add(source);
+    boardField.value = result.draft;
+    byId("task-draft-source").hidden = false;
+    boardField.focus();
+  });
+});
 byId("board-search").addEventListener("input", () => renderMessages(displayedTopic));
 byId("board-cancel-reply").addEventListener("click", () => setReply(null));
-byId("board-mention").addEventListener("change", event => {
+function renderPendingAttachments() {
+  const files = Array.from(byId("board-attachments").files);
+  byId("board-pending-attachments").hidden = files.length === 0;
+  byId("board-attachment-names").textContent = files.map(file => file.name).join(" · ");
+}
+
+function closeMentionOptions() {
+  byId("board-mention-options").hidden = true;
+  byId("board-mention").setAttribute("aria-expanded", "false");
+}
+
+function showMentionOptions(fromButton = false) {
   const field = byId("board-message");
-  if (!event.target.value) return;
-  const start = field.selectionStart;
-  const prefix = start && !/\s/.test(field.value[start - 1]) ? " " : "";
-  field.setRangeText(prefix + event.target.value + " ", start, field.selectionEnd, "end");
-  event.target.value = "";
-  field.focus();
+  const cursor = field.selectionStart;
+  const match = field.value.slice(0, cursor).match(/(?<![\p{L}\p{N}_@])@([\p{L}\p{N}_-]*)$/u);
+  if ((!match && !fromButton) || !boardRoster.length || field.disabled) {
+    closeMentionOptions();
+    return;
+  }
+  const search = (match?.[1] || "").toLocaleLowerCase("tr-TR");
+  const choices = [{label: "@Herkes", tag: "@Herkes"}, ...boardRoster.map(agent => ({
+    label: `${agent.name} · @${agent.handle}`, tag: `@${agent.handle}`,
+  }))].filter(item => item.label.toLocaleLowerCase("tr-TR").includes(search));
+  const menu = byId("board-mention-options");
+  menu.replaceChildren(...choices.map(item => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = item.label;
+    button.addEventListener("click", () => {
+      const start = match?.index ?? cursor;
+      const prefix = !match && start && !/\s/.test(field.value[start - 1]) ? " " : "";
+      field.setRangeText(prefix + item.tag + " ", start, field.selectionEnd, "end");
+      closeMentionOptions();
+      field.focus();
+    });
+    return button;
+  }));
+  menu.hidden = !choices.length;
+  byId("board-mention").setAttribute("aria-expanded", String(!menu.hidden));
+}
+
+byId("board-add-attachment").addEventListener("click", () => byId("board-attachments").click());
+byId("board-attachments").addEventListener("change", renderPendingAttachments);
+byId("board-clear-attachments").addEventListener("click", () => {
+  byId("board-attachments").value = "";
+  renderPendingAttachments();
+  byId("board-message").focus();
+});
+byId("board-mention").addEventListener("click", () => {
+  if (!byId("board-mention-options").hidden) closeMentionOptions();
+  else {
+    showMentionOptions(true);
+    byId("board-mention-options").querySelector("button")?.focus();
+  }
+});
+byId("board-message").addEventListener("input", () => showMentionOptions());
+byId("board-message").addEventListener("keydown", event => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  if (event.repeat) return;
+  const field = event.currentTarget;
+  if (event.altKey) {
+    if (field.value.length - (field.selectionEnd - field.selectionStart) < field.maxLength) {
+      field.setRangeText("\n", field.selectionStart, field.selectionEnd, "end");
+    }
+    closeMentionOptions();
+  } else if (field.value.trim() || byId("board-attachments").files.length) {
+    byId("board-form").requestSubmit(byId("board-send"));
+  }
+});
+byId("board-form").addEventListener("keydown", event => {
+  if (byId("board-mention-options").hidden) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeMentionOptions();
+    byId("board-message").focus();
+  } else if (event.key === "ArrowDown" && event.target.id === "board-message") {
+    event.preventDefault();
+    byId("board-mention-options").querySelector("button")?.focus();
+  }
+});
+document.addEventListener("click", event => {
+  if (!event.target.closest(".board-composer")) closeMentionOptions();
 });
 byId("board-form").addEventListener("submit", event => {
   event.preventDefault();
-  const directed = event.submitter?.value !== "post";
+  const directed = event.submitter?.value !== "post" && boardConfigured && boardRoster.length;
+  closeMentionOptions();
   boardOperation(async () => {
     const field = byId("board-message");
     const text = field.value;
@@ -527,12 +687,14 @@ byId("board-form").addEventListener("submit", event => {
       return {name: file.name, data: btoa(bytestring)};
     }));
     const path = byId("repo").value;
-    if (topicId && displayedTopic?.project && projectKey(displayedTopic.project) !== projectKey(path)) {
-      throw new Error("Bu sohbet başka bir projeye ait. Üstten projeyi aç veya yeni konu seç.");
+    if (topicId && projectKey(path) && projectKey(displayedTopic?.project) !== projectKey(path)) {
+      throw new Error("Bu sohbet seçili projeye bağlı değil. Yeni konu aç veya panoyu projeye bağla.");
     }
     const result = await sendBoard({action: "post", text, reply_to: replyMessage?.id, attachments, repo: path});
     if (field.value === text) field.value = "";
     byId("board-attachments").value = "";
+    renderPendingAttachments();
+    byId("board-more").open = false;
     setReply(null);
     if (result.id !== topicId) selectTopic(result.id);
     if (directed) {

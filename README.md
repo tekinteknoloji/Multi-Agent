@@ -2,13 +2,39 @@
 
 Multi-Agent, bir yazılım projesinde yerel modelleri ve kodlama ajanlarını aynı web panelinden yönetir. Panoda ekip görüşlerini alabilir, bir planı düzenleyip denetletebilir ve onayladığın kapsamı geliştirmeye gönderebilirsin. Panel kod değişikliğini ayrı bir Git kopyasında üretir, bağımsız testi ve denetimi çalıştırır, ardından kaynak projeye uygulama kararını sana bırakır.
 
-## Hızlı başlangıç
+## Ne için kullanılır?
 
-1. Python ve Git kur. Yerel model kullanacaksan Ollama'yı çalıştır ve en az bir metin modeli yükle. Örnek yerel model: `ollama pull qwen3:8b`.
-2. Windows'ta [Multi-Agent-Ac.bat](Multi-Agent-Ac.bat) dosyasını aç. Komut satırıyla başlatmak için proje klasöründe `python web_app.py --open` çalıştır. Panel varsayılan olarak `http://127.0.0.1:18765` adresini kullanır.
-3. Panelde **Proje klasörü** alanına çalıştıracağın projenin tam yolunu yaz. Var olan projede **Projeyi aç**, boş klasörde **Boş proje hazırla** seç. Boş proje oluştururken üst klasörün var olması gerekir.
-4. **+ Ajan ekle** ile ekip kur. Bir ajanı otomatik **Geliştirme**, bir diğerini **Denetim** adımına ata. Plan oluşturmak veya tam akışı kullanmak için ayrıca **Planlama** ataması yap.
-5. Görevi yaz, gerekiyorsa test komutunu **Test ayarları** altında gir ve **Doğrudan geliştir**, **Plan oluştur** veya **Tüm akışı başlat** seçeneklerinden birini kullan.
+- **Projeyi ekiple tartışmak.** Panoda bir ajana veya ekibe soru sor, kaynakları incele ve kalıcı olmasını istediğin kararları onayla.
+- **Konuşulan işi göreve çevirmek.** Açık pano konusundan düzenlenebilir bir görev taslağı hazırlat veya görevi doğrudan yaz.
+- **Kod değişikliğini uygulamadan önce değerlendirmek.** Ayrı Git kopyasında üretilen farkı, test kanıtlarını ve denetim bulgularını incele.
+- **Projeyi geçmişiyle taşımak.** Proje klasörünü sohbetleri, ekleri, kararları ve raporlarıyla başka bir bilgisayara kopyala.
+
+## Kurulum
+
+Python ve Git kurulu ve komut satırından erişilebilir olmalı. Panel Python standart kütüphanesini kullanır. Ajanlar için yalnız seçtiğin sağlayıcının istemcisini veya API bağlantısını hazırlaman gerekir.
+
+```sh
+git clone https://github.com/tekinteknoloji/Multi-Agent.git
+cd Multi-Agent
+python web_app.py --open
+```
+
+Windows'ta [Multi-Agent-Ac.bat](Multi-Agent-Ac.bat) dosyasını çift tıklayarak da açabilirsin. Panelin varsayılan adresi [127.0.0.1:18765](http://127.0.0.1:18765/). Aynı kopya zaten çalışıyorsa başlatıcı mevcut paneli açar. Portu başka bir uygulama kullanıyorsa `python web_app.py --port 18766 --open` ile farklı bir port seç.
+
+| Sağlayıcı | Hazırlık |
+| --- | --- |
+| Ollama | Ollama'yı çalıştır, örneğin `ollama pull qwen3:8b` ile bir metin modeli indir. Ajan ayarında **Model listesini yenile** ile kurulu modeli seç. |
+| LM Studio | **Local Model API** sunucusunu başlat. Ajan sağlayıcısı olarak **OpenAI uyumlu API** seç, LM Studio'da gösterilen `/v1` ile biten Base URL'yi ve model kimliğini gir. Sunucuda kimlik doğrulama kapalıysa anahtar alanını boş bırak. |
+| Codex CLI / Claude Code CLI | Kullanacağın CLI'yi kur ve paneli çalıştıran kullanıcı hesabında oturum aç. CLI komutu PATH üzerinde olmalı. Model alanını boş bırakırsan CLI varsayılan modeli kullanılır. |
+| OpenAI uyumlu API / Anthropic API | Sağlayıcının API adresini ve model kimliğini gir. Anahtar gerekiyorsa paneli başlatan ortamda tanımla ve formda ortam değişkeninin adını yaz. |
+
+## İlk kullanım
+
+1. **Klasör seç → Projeyi aç** ile mevcut proje klasörünü aç. **Yeni proje klasörü** Windows sistem penceresinde boş klasör oluşturup başlangıç commit'i olan bir Git projesi hazırlar. Yolu elle yazdıysan **Boş proje hazırla** düğmesini kullanabilirsin.
+2. **+ Ajan ekle** ile sağlayıcıyı, modelini, adını, `@` etiketini ve görevini seç. Pano görüşmeleri için tek ajanla başlayabilirsin. Aynı modeli farklı ad ve rollerle birden fazla ajana atayabilirsin.
+3. **Pano** bölümünde mesaj yaz veya dosya ekle. Bir ajana yöneltmek için `@etiket`, ekibe yöneltmek için `@Herkes` kullan. Enter gönderir, Alt+Enter yeni satır açar.
+4. Kod işi için **Görev ve sonuç** alanına talebi yaz. Konu panoda netleştiyse **Konuşmadan görev oluştur** ile düzenlenebilir bir taslak al. Taslağı kontrol edip akışı sen başlatırsın.
+5. **Plan oluştur** için Planlama, **Doğrudan geliştir** için Geliştirme ve Denetim, **Tüm akışı başlat** için üç akış atamasını da seç. **Test ayarları** altında bağımsız test komutunu tanımlayabilirsin. Otomatik kod akışı başlangıç commit'i bulunan bir Git deposu kullanır.
 
 ### Codex ve yerel denetçiyle örnek
 
@@ -50,7 +76,8 @@ from hesap import carp; assert carp(3, 4) == 12; assert carp(-3, 4) == -12; asse
 
 Her ajanın adı, çağrı etiketi, rol metni, sağlayıcısı ve modeli ayrı ayarlanır. Hazır görev metnini düzenleyebilirsin. Panel Ollama, Codex CLI, Claude Code CLI, OpenAI uyumlu API ve Anthropic API sağlayıcılarını destekler. API bağlantıları için panelde anahtarın kendisi yerine ortam değişkeninin adını gir. Rol şablonlarının yapabileceği işlemler seçilen sağlayıcının araçlarına ve erişimine bağlıdır.
 
-- **Panoya yaz** ile not veya ek bırak. **Yaz ve ajanlara ilet** ile yanıt iste. Bir ajanı `@etiket` ile çağırabilir veya **Yanıtla** ile bir mesajı alıntılayabilirsin.
+- Pano yazma satırındaki ataçla en fazla dört dosya ve toplam 2 MB ekleyebilirsin. **Gönder** mesajı iletir. Yalnız kayıt bırakmak için **Diğer işlemler → Sadece panoya yaz** seç. **Yanıtla** ile bir mesajı alıntılayabilirsin.
+- Mesajın altında hangi ajanların sırada olduğunu, yanıt hazırladığını, yanıtladığını veya hata aldığını görebilirsin.
 - Etiketsiz isteklerde etkin bir **Supervisor / Orchestrator** varsa yönlendirmeyi o üstlenir. “Önce UI/UX, ardından QA & Review” gibi açıkça yazılan dal sırası korunur. Yanıtlar geldikten sonra **Ekibi özetle** aynı isteğe verilen katkıları birleştirir.
 - Yeni ajan yanıtlarında **Neden bu ajan?** yönlendirme yolunu, **Hangi kayıtları gördü?** çağrıya eklenen kaynakları gösterir. Karar, mesaj ve rapor bağlantıları kaynak kaydı açar.
 - **Taslağa al** bir pano mesajını görev alanına taşır. **Kod turlarında Git farkını ve test kanıtını izle** seçeneği, ajanı kod ve test çıktısına ek gözlemci olarak çağırır.
@@ -58,7 +85,7 @@ Her ajanın adı, çağrı etiketi, rol metni, sağlayıcısı ve modeli ayrı a
 
 ## Proje hafızası ve test kanıtı
 
-- Projeye bağlı sohbetler, ekler, ekip ayarları ve raporlar kaynak klasördeki `Proje-Hafizasi/` altında saklanır. Klasörü projeyle birlikte taşıyabilir veya seçili konuyu **Hafızayı indir** ile ZIP olarak alabilirsin.
+- Pano konu listesi bir proje açılınca o projenin kayıtlarından yüklenir. Sohbet başlıkları, mesajlar, ekler, ekip ayarları ve raporlar kaynak klasördeki `Proje-Hafizasi/` altında saklanır. Klasörü projeyle birlikte taşıyabilir veya seçili konuyu **Hafızayı indir** ile ZIP olarak alabilirsin.
 - Ajanın önerisi, sen **Kararı onayla** dediğinde geçerli proje kararına dönüşür. Yeni bir karar öncekinin yerine geçecekse onay sırasında eski kaydı seç. Pano güncel ve değiştirilmiş kararları kaynak mesajlarıyla gösterir.
 - Ajan çağrısına ilgili kısa geçmiş, onaylı kararlar ve test kanıtı eklenir. Panel test çıktısının yanında komutu, çıkış kodunu, başlangıç commit’ini ve Git farkının özetini saklar. Test raporu sorgusunda ajan kayıtları seçer, panel kapsamı kayıttan gösterir.
 - İlgili kabul kriterleri ajana durumları ve bağlı test kimlikleriyle iletilir. **Hangi kayıtları gördü?** bölümünden ilgili görevin kriterlerini açabilirsin.

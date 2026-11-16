@@ -245,7 +245,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def api_answer(agent, instruction, text):
+def api_answer(agent, instruction, text, schema=None):
     provider = agent["provider"]
     if endpoint_key(agent) not in local_endpoints()[1]:
         raise ValueError("Bu API bağlantısını bu bilgisayarda kullanmak için ajanı açıp bağlantıyı kaydet.")
@@ -267,12 +267,21 @@ def api_answer(agent, instruction, text):
         path = "/chat/completions"
         payload = {"model": agent["model"], "messages": [{"role": "system", "content": instruction},
                                                          {"role": "user", "content": text}]}
-    request = Request(agent["endpoint"] + path, headers=headers, data=json.dumps(payload).encode("utf-8"))
-    try:
-        with build_opener(NoRedirect()).open(request, timeout=180) as response:
-            result = json.load(response)
-    except HTTPError as error:
-        raise ValueError(f"Model API’si HTTP {error.code} yanıtı verdi.") from error
+        if schema and urlsplit(agent["endpoint"]).hostname in {"127.0.0.1", "localhost", "::1"}:
+            payload["response_format"] = {
+                "type": "json_schema", "json_schema": {"name": "multi_agent_response", "schema": schema},
+            }
+    while True:
+        request = Request(agent["endpoint"] + path, headers=headers, data=json.dumps(payload).encode("utf-8"))
+        try:
+            with build_opener(NoRedirect()).open(request, timeout=180) as response:
+                result = json.load(response)
+            break
+        except HTTPError as error:
+            if error.code in (400, 422, 501) and payload.pop("response_format", None):
+                error.close()
+                continue
+            raise ValueError(f"Model API’si HTTP {error.code} yanıtı verdi.") from error
     if provider == "anthropic":
         return "\n".join(part["text"] for part in result["content"] if part.get("type") == "text")
     return result["choices"][0]["message"]["content"]
@@ -316,7 +325,7 @@ def ask(agent, instruction, evidence, schema=None, on_text=None, temperature=Non
         instruction += "\nYalnızca gelen JSON şemasına uyan geçerli JSON döndür: " + json.dumps(schema, ensure_ascii=False)
     text = json.dumps(evidence, ensure_ascii=False)
     answer = (cli_answer(agent, instruction + "\n\n" + text) if agent["provider"] in {"codex", "claude"}
-              else api_answer(agent, instruction, text))
+              else api_answer(agent, instruction, text, schema))
     answer = answer.strip()
     if schema and answer.startswith("```"):
         answer = answer.split("\n", 1)[1].rsplit("```", 1)[0].strip()

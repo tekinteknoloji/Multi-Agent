@@ -940,6 +940,56 @@ form.addEventListener("submit", async (event) => {
 });
 
 byId("refresh-models").addEventListener("click", loadModels);
+async function requestProjectPreparation(fields) {
+  const response = await fetch("/api/project", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(fields),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error);
+  byId("repo").value = data.repo;
+  await openWorkspaceProject(data.repo);
+  byId("project-status").textContent = "Proje hazır. Görevini yazıp akışı başlatabilirsin.";
+}
+
+async function pickProjectFolder(create) {
+  if (preparingProject) return;
+  const controls = [byId("browse-project"), byId("new-project-folder"), byId("prepare-project")];
+  const status = byId("project-status");
+  preparingProject = true;
+  controls.forEach(button => { button.disabled = true; });
+  toggleButtons();
+  status.hidden = false;
+  status.classList.remove("error");
+  status.textContent = create
+    ? "Klasör seçme penceresinde Yeni Klasör ile boş bir klasör oluşturup seç."
+    : "Açılan sistem penceresinden proje klasörünü seç.";
+  try {
+    const response = await fetch("/api/project/pick", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({repo: byId("repo").value, create}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    if (!data.repo) {
+      status.hidden = true;
+      return;
+    }
+    if (create) await requestProjectPreparation({repo: data.repo});
+    else await openWorkspaceProject(data.repo);
+  } catch (error) {
+    status.classList.add("error");
+    status.textContent = error.message;
+  } finally {
+    preparingProject = false;
+    controls.forEach(button => { button.disabled = false; });
+    toggleButtons();
+  }
+}
+
+byId("browse-project").addEventListener("click", () => pickProjectFolder(false));
+byId("new-project-folder").addEventListener("click", () => pickProjectFolder(true));
+
 byId("prepare-project").addEventListener("click", async () => {
   const repo = byId("repo");
   const button = byId("prepare-project");
@@ -952,15 +1002,7 @@ byId("prepare-project").addEventListener("click", async () => {
   projectStatus.classList.remove("error");
   projectStatus.textContent = "Boş proje hazırlanıyor…";
   try {
-    const response = await fetch("/api/project", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({repo: repo.value}),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    repo.value = data.repo;
-    await openWorkspaceProject(data.repo);
-    projectStatus.textContent = "Proje hazır. Görevini yazıp akışı başlatabilirsin.";
+    await requestProjectPreparation({repo: repo.value});
   } catch (error) {
     projectStatus.classList.add("error");
     projectStatus.textContent = error.message;
